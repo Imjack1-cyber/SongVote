@@ -1,0 +1,17 @@
+﻿{
+    "SourceDirectory":  "C:\\dev\\eclipse\\workspace\\SongVote",
+    "OutputFile":  "songvote.txt",
+    "MaxFileSizeKB":  400,
+    "ExcludedDirectories":  [
+                                "C:\\dev\\eclipse\\workspace\\SongVote\\node_modules",
+                                "C:\\dev\\eclipse\\workspace\\SongVote\\.next"
+                            ],
+    "ExcludedFiles":  [
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\combine_code_gui.ps1",
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\package-lock.json"
+                      ],
+    "ExtensionFilterList":  [
+
+                            ],
+    "ExtensionFilterMode":  "exclude"
+}

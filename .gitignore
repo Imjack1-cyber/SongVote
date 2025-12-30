@@ -1,0 +1,56 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js
+/.next/
+/out/
+
+# Production
+/build
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local Env Files (CRITICAL: Do not commit secrets)
+.env
+.env*.local
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Prisma
+# Keep schema.prisma, but ignore local sqlite files if you ever use them
+*.sqlite
+*.sqlite-journal
+
+# Eclipse IDE
+.metadata
+.settings/
+.classpath
+.project
+bin/
+*.launch
+
+# VS Code 
+.vscode/
+
+# compiled files / extra
+package-lock.json
+songvote.txt
+combine_code_gui.ps1

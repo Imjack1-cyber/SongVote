@@ -1,0 +1,136 @@
+// ========================================================================
+// FILE: prisma/schema.prisma
+// ========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Host {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  youtubeApiKey     String?  
+
+  settings     GlobalSettings?
+  votes        VoteSession[]
+  blacklist    Blacklist[] 
+}
+
+model GlobalSettings {
+  id        String @id @default(uuid())
+  hostId    String @unique
+  host      Host   @relation(fields: [hostId], references: [id])
+
+  bgColor      String @default("#f8fafc")
+  fgColor      String @default("#0f172a")
+  accentColor  String @default("#6366f1")
+
+  darkBgColor      String @default("#020617")
+  darkFgColor      String @default("#f8fafc")
+  darkAccentColor  String @default("#818cf8")
+
+  darkMode     Boolean @default(false)
+}
+
+model VoteSession {
+  id        String   @id
+  hostId    String
+  host      Host     @relation(fields: [hostId], references: [id])
+  title     String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  
+  startTime DateTime?
+  endTime   DateTime?
+
+  requireVerification Boolean @default(false)
+  votesPerUser        Int     @default(5)
+  cycleDelay          Int     @default(0)
+
+  defaultPermissions  Json?   
+
+  settings  SessionSettings?
+  guests    GuestAccount[]
+  queue     QueueItem[]
+}
+
+model SessionSettings {
+  id            String @id @default(uuid())
+  voteSessionId String @unique
+  voteSession   VoteSession @relation(fields: [voteSessionId], references: [id])
+  bgColor       String?
+  fgColor       String?
+  accentColor   String?
+}
+
+model GuestAccount {
+  id            String      @id @default(uuid())
+  voteSessionId String
+  voteSession   VoteSession @relation(fields: [voteSessionId], references: [id])
+  username      String
+  password      String
+  isBanned      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  
+  permissions   Json?
+
+  votes         QueueItem[]
+}
+
+model Song {
+  id          String   @id
+  title       String
+  artist      String
+  album       String? 
+  albumArtUrl String? 
+  durationMs  Int
+  cachedAt    DateTime @default(now())
+  queueItems  QueueItem[]
+}
+
+model QueueItem {
+  id            String      @id @default(uuid())
+  voteSessionId String
+  voteSession   VoteSession @relation(fields: [voteSessionId], references: [id])
+  songId        String
+  song          Song        @relation(fields: [songId], references: [id])
+  suggestedByGuestId String?
+  guest              GuestAccount? @relation(fields: [suggestedByGuestId], references: [id])
+  voteCount     Int         @default(0)
+  status        QueueStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+// NEW MODEL
+model Blacklist {
+  id        String   @id @default(uuid())
+  hostId    String
+  host      Host     @relation(fields: [hostId], references: [id])
+  
+  type      BlacklistType 
+  value     String        
+  
+  createdAt DateTime @default(now())
+}
+
+enum QueueStatus {
+  PENDING
+  LIVE
+  PLAYING
+  PLAYED
+  REJECTED
+}
+
+enum BlacklistType {
+  SONG_ID
+  KEYWORD
+}

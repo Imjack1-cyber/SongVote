@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* DEFAULT FALLBACKS (Overwritten by ThemeWrapper JS) */
+    --background: #f8fafc;
+    --surface: #ffffff;
+    --foreground: #0f172a;
+    --accent: #6366f1;
+    --accent-fg: #ffffff;
+    --border: #e2e8f0;
+  }
+
+  .dark {
+    --background: #020617;
+    --surface: #0f172a;
+    --foreground: #f8fafc;
+    --accent: #818cf8;
+    --accent-fg: #ffffff;
+    --border: #1e293b;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--accent-fg)] px-6 py-2.5 text-sm font-semibold transition-all hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-50;
+    /* Safe CSS Shadow */
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  }
+
+  .card {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+    @apply rounded-xl shadow-sm;
+  }
+
+  /* Explicitly use --surface for Header/Footer */
+  .layout-header {
+    background-color: var(--surface);
+    border-bottom: 1px solid var(--border);
+    @apply sticky top-0 z-50 w-full shadow-sm transition-colors duration-300;
+  }
+
+  .layout-footer {
+    background-color: var(--surface);
+    border-top: 1px solid var(--border);
+    @apply w-full mt-auto transition-colors duration-300;
+  }
+}
