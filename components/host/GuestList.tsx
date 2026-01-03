@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: components/host/GuestList.tsx
-// ========================================================================
-
 'use client';
 
 import { Printer, Ban, Trash2, CheckCircle } from 'lucide-react';

@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: app/[hostname]/[voteId]/print/page.tsx
-// ========================================================================
-
 import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';

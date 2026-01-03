@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Search, Plus, Loader2, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
+import DOMPurify from 'isomorphic-dompurify';
 
 interface Song {
   id: string;
@@ -27,7 +28,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
     if (!query.trim()) return;
 
     setLoading(true);
-    setResults([]); // Clear previous
+    setResults([]); 
     setHasSearched(true);
     
     try {
@@ -86,7 +87,10 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
                   )}
                 </div>
                 <div className="overflow-hidden min-w-0">
-                  <p className="font-medium text-sm truncate" dangerouslySetInnerHTML={{ __html: track.title }} />
+                  <p 
+                    className="font-medium text-sm truncate" 
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(track.title) }} 
+                  />
                   <p className="text-xs opacity-60 truncate">{track.artist}</p>
                 </div>
               </div>
@@ -105,7 +109,6 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
           ))}
         </div>
       ) : (
-        // Show "No results" only if we actually searched and found nothing
         hasSearched && !loading && (
             <div className="text-center p-4 opacity-50 text-sm">
                 No songs found in database or YouTube.

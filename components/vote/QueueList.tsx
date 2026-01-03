@@ -1,8 +1,9 @@
 'use client';
 
-import { ThumbsUp, Music, Check, Trash2, Ban, Shield } from 'lucide-react';
+import { ThumbsUp, Music, Check, Trash2, Ban } from 'lucide-react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
+import DOMPurify from 'isomorphic-dompurify';
 
 interface QueueListProps {
   items: any[];
@@ -34,6 +35,9 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
         const isSelected = selectedIds.has(item.id);
         const isSubmitted = submittedIds.has(item.id);
         
+        // SECURITY: Sanitize song title to prevent XSS
+        const sanitizedTitle = DOMPurify.sanitize(item.song.title);
+        
         return (
             <motion.div 
                 layout
@@ -42,7 +46,6 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ duration: 0.3 }}
-                // FIX: Allow Host to click row to toggle vote
                 onClick={() => !isSubmitted && onToggle(item.id)}
                 className={`card p-4 flex items-center justify-between group transition-all relative overflow-hidden cursor-pointer
                     ${isSelected ? 'border-[var(--accent)] bg-[var(--accent)]/5' : 'hover:border-[var(--border)]'}
@@ -74,7 +77,10 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
                     )}
                 </div>
                 <div className="min-w-0">
-                    <h4 className="font-bold text-sm md:text-base line-clamp-1" dangerouslySetInnerHTML={{ __html: item.song.title }} />
+                    <h4 
+                        className="font-bold text-sm md:text-base line-clamp-1" 
+                        dangerouslySetInnerHTML={{ __html: sanitizedTitle }} 
+                    />
                     <p className="text-xs md:text-sm opacity-60 truncate">{item.song.artist}</p>
                 </div>
             </div>
@@ -85,7 +91,7 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
                     <span className="text-[10px] uppercase font-bold opacity-50">Votes</span>
                 </div>
                 
-                {/* VOTE TOGGLE (Available to Everyone) */}
+                {/* VOTE TOGGLE */}
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all flex-shrink-0
                     ${isSubmitted 
                         ? 'bg-green-500 text-white' 
@@ -97,7 +103,7 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
                     {isSubmitted ? <Check className="w-5 h-5" /> : <ThumbsUp className="w-4 h-4" />}
                 </div>
 
-                {/* ADMIN CONTROLS (Host Only - Extra Buttons) */}
+                {/* ADMIN CONTROLS */}
                 {isHost && (
                     <div className="flex gap-1 pl-2 border-l border-[var(--border)] ml-2">
                         {onBan && (

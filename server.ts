@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: server.ts
-// ========================================================================
-
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
@@ -10,6 +6,9 @@ import { PrismaClient } from '@prisma/client';
 import { redis } from './lib/redis';
 import { checkPermission } from './lib/permissions';
 import { checkRateLimit } from './lib/ratelimit';
+import { z } from 'zod';
+import * as cookie from 'cookie';
+import { jwtVerify } from 'jose';
 
 const prisma = new PrismaClient();
 
@@ -26,6 +25,85 @@ const port = 3000;
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
+
+// --- AUTH HELPER FOR SOCKETS ---
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret');
+
+async function getUserIdFromSocket(socket: any): Promise<string | null> {
+    try {
+        const rawCookies = socket.handshake.headers.cookie;
+        if (!rawCookies) return null;
+        
+        const parsed = cookie.parse(rawCookies);
+        const token = parsed.session_token;
+        if (!token) return null;
+
+        const { payload } = await jwtVerify(token, JWT_SECRET);
+        return (payload as any).userId;
+    } catch (e) {
+        return null;
+    }
+}
+
+// --- ZOD SCHEMAS ---
+
+// FIX: Session IDs are alphanumeric strings (from generateVoteId), not UUIDs.
+const SessionIdSchema = z.string().min(1);
+
+const SongDataSchema = z.object({
+    id: z.string().min(1),
+    title: z.string().max(255),
+    artist: z.string().max(255),
+    album: z.string().nullable().optional(),
+    albumArtUrl: z.string().nullable().optional(),
+    durationMs: z.number().nonnegative().optional().default(0),
+});
+
+const SuggestSchema = z.object({
+    sessionId: SessionIdSchema,
+    songData: SongDataSchema,
+    suggestedBy: z.string().uuid().nullable().optional()
+});
+
+const BatchVoteSchema = z.object({
+    sessionId: SessionIdSchema,
+    queueItemIds: z.array(z.string().uuid()).min(1).max(50),
+    voterId: z.string().min(1)
+});
+
+const PlayerUpdateSchema = z.object({
+    sessionId: SessionIdSchema,
+    state: z.object({
+        status: z.enum(['playing', 'paused', 'buffering']),
+        videoId: z.string(),
+        position: z.number().nonnegative()
+    }),
+    voterId: z.string().uuid().optional() 
+});
+
+const TransitionSchema = z.object({
+    sessionId: SessionIdSchema,
+    prevId: z.string().uuid().nullable().optional(),
+    nextId: z.string().uuid().nullable().optional(),
+    voterId: z.string().uuid().optional()
+});
+
+const ControlSchema = z.object({
+    sessionId: SessionIdSchema,
+    queueItemId: z.string().uuid().optional(),
+    voterId: z.string().uuid().optional()
+});
+
+const ForcePlaySchema = z.object({
+    sessionId: SessionIdSchema,
+    songData: SongDataSchema,
+    voterId: z.string().uuid()
+});
+
+const ModSchema = z.object({
+    itemId: z.string().uuid(),
+    sessionId: SessionIdSchema
+});
 
 // --- STATE HELPERS ---
 
@@ -44,7 +122,6 @@ const setPlaybackState = async (sessionId: string, state: any) => {
 /**
  * Checks if queue is empty. If so, picks a random song from history
  * and inserts it DIRECTLY as 'PLAYING'. 
- * This ensures it plays but DOES NOT appear in the 'LIVE' voting list.
  */
 const playRadioSong = async (sessionId: string) => {
     // 1. Check if Queue has items
@@ -85,7 +162,7 @@ const playRadioSong = async (sessionId: string) => {
         data: {
             voteSessionId: sessionId,
             songId: songId,
-            status: 'PLAYING', // Crucial: This keeps it out of the LIVE list
+            status: 'PLAYING', 
             voteCount: 0, 
             suggestedByGuestId: null 
         }
@@ -130,25 +207,52 @@ app.prepare().then(() => {
     
     // --- JOIN LOGIC ---
     socket.on('join-room', async (roomId) => {
+      // Basic validation for roomId
+      if (typeof roomId !== 'string' || roomId.length > 64) return;
+      
       socket.join(roomId);
       try { await broadcastState(io, roomId); } catch (e) { console.error(e); }
     });
 
     socket.on('join-host-room', async (roomId) => {
-      socket.join(`host-${roomId}`);
-      try {
-        const pending = await prisma.queueItem.findMany({
-            where: { voteSessionId: roomId, status: 'PENDING' },
-            include: { song: true },
-            orderBy: { createdAt: 'asc' }
-        });
-        socket.emit('pending-update', pending);
-      } catch (e) { console.error(e); }
+      if (typeof roomId !== 'string' || roomId.length > 64) return;
+
+      // SECURITY: Validate that the requester is actually the host
+      // Since the standard client doesn't send payload auth, we check cookies
+      const userId = await getUserIdFromSocket(socket);
+      
+      if (!userId) {
+          // Silent fail or emit error for security
+          return;
+      }
+
+      // Check DB if this user owns the session
+      const session = await prisma.voteSession.findUnique({ 
+          where: { id: roomId },
+          select: { hostId: true }
+      });
+
+      if (session && session.hostId === userId) {
+        socket.join(`host-${roomId}`);
+        try {
+            const pending = await prisma.queueItem.findMany({
+                where: { voteSessionId: roomId, status: 'PENDING' },
+                include: { song: true },
+                orderBy: { createdAt: 'asc' }
+            });
+            socket.emit('pending-update', pending);
+        } catch (e) { console.error(e); }
+      }
     });
 
     // --- PLAYER SYNC ---
-    socket.on('player-update', async ({ sessionId, state, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+    socket.on('player-update', async (rawPayload) => {
+        const result = PlayerUpdateSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, state, voterId } = result.data;
+
+        // SECURITY: Strict Permission Check
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
         if (!(await checkRateLimit(`sync:${voterId}`, 10, 2))) return;
 
         try {
@@ -179,8 +283,19 @@ app.prepare().then(() => {
     });
 
     // --- SONG SUGGESTION ---
-    socket.on('suggest-song', async ({ sessionId, songData, suggestedBy }) => {
-      if (suggestedBy && !(await checkRateLimit(`suggest:${suggestedBy}`, 5, 60))) {
+    socket.on('suggest-song', async (rawPayload) => {
+      const result = SuggestSchema.safeParse(rawPayload);
+      if (!result.success) {
+          // Log detailed error in dev for easier debugging
+          if (dev) console.error("Suggest Validation Failed:", result.error);
+          socket.emit('error', 'Invalid song data format');
+          return;
+      }
+      const { sessionId, songData, suggestedBy } = result.data;
+
+      // SECURITY: Fix Rate Limit Bypass (Fallback to IP/SocketID)
+      const identifier = suggestedBy || socket.handshake.address || socket.id;
+      if (!(await checkRateLimit(`suggest:${identifier}`, 5, 60))) {
           socket.emit('error', 'You are suggesting too fast. Please wait.');
           return;
       }
@@ -210,7 +325,7 @@ app.prepare().then(() => {
           update: {},
           create: {
             id: songData.id,
-            title: songData.title,
+            title: songData.title, // XSS note: Sanitization happens on render in frontend
             artist: songData.artist,
             album: songData.album || 'Unknown',
             albumArtUrl: songData.albumArtUrl,
@@ -234,8 +349,9 @@ app.prepare().then(() => {
         const status = session.requireVerification ? 'PENDING' : 'LIVE';
         let validGuestId = null;
         if (suggestedBy) {
+            // Verify guest exists to enforce integrity
             const guest = await prisma.guestAccount.findUnique({ where: { id: suggestedBy } });
-            if (guest) validGuestId = suggestedBy;
+            if (guest && !guest.isBanned) validGuestId = suggestedBy;
         }
         
         await prisma.queueItem.create({
@@ -261,10 +377,21 @@ app.prepare().then(() => {
     });
 
     // --- BATCH VOTING (Limits & Cooldowns) ---
-    socket.on('batch-vote', async ({ sessionId, queueItemIds, voterId }) => {
-        try {
-            if (!voterId || !Array.isArray(queueItemIds) || queueItemIds.length === 0) return;
+    socket.on('batch-vote', async (rawPayload) => {
+        const result = BatchVoteSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, queueItemIds, voterId } = result.data;
 
+        // SECURITY: Lock to prevent race conditions (Double voting)
+        const lockKey = `vote_lock:${sessionId}:${voterId}`;
+        const isLocked = await redis.set(lockKey, 'locked', 'EX', 5, 'NX'); 
+        
+        if (!isLocked) {
+            socket.emit('error', 'Processing previous vote. Please wait.');
+            return;
+        }
+
+        try {
             const session = await prisma.voteSession.findUnique({ where: { id: sessionId } });
             if (!session) return;
 
@@ -308,13 +435,23 @@ app.prepare().then(() => {
             await broadcastState(io, sessionId);
             socket.emit('vote-success', { confirmedIds: newVotes, cooldownSeconds: session.cycleDelay * 60 });
 
-        } catch (e) { console.error("Batch Vote Error", e); }
+        } catch (e) { 
+            console.error("Batch Vote Error", e); 
+        } finally {
+            // Release lock immediately after processing
+            await redis.del(lockKey);
+        }
     });
 
     // --- PLAYBACK TRANSITIONS (Atomic Swap) ---
     
-    socket.on('song-transition', async ({ sessionId, prevId, nextId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+    socket.on('song-transition', async (rawPayload) => {
+        const result = TransitionSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, prevId, nextId, voterId } = result.data;
+
+        // SECURITY: Strict Permission Check
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
 
         try {
             const ops = [];
@@ -360,8 +497,15 @@ app.prepare().then(() => {
 
     // --- PLAYBACK HELPERS ---
 
-    socket.on('song-started', async ({ sessionId, queueItemId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+    socket.on('song-started', async (rawPayload) => {
+        const result = ControlSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, queueItemId, voterId } = result.data;
+        if (!queueItemId) return;
+
+        // SECURITY: Strict Check
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+
         try {
             // Cleanup any stuck PLAYING items
             await prisma.queueItem.updateMany({ where: { voteSessionId: sessionId, status: 'PLAYING' }, data: { status: 'PLAYED' } });
@@ -382,8 +526,15 @@ app.prepare().then(() => {
         } catch (e) { console.error("Start Error", e); }
     });
 
-    socket.on('song-ended', async ({ sessionId, queueItemId, voterId }) => {
-        if (voterId && !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+    socket.on('song-ended', async (rawPayload) => {
+        const result = ControlSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, queueItemId, voterId } = result.data;
+        if (!queueItemId) return;
+
+        // SECURITY: FIX BYPASS - Require voterId and Check permission
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+
         try {
             await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'PLAYED' } });
             await redis.del(`session_playback:${sessionId}`);
@@ -391,8 +542,13 @@ app.prepare().then(() => {
         } catch (e) { console.error("End Error", e); }
     });
 
-    socket.on('song-back', async ({ sessionId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+    socket.on('song-back', async (rawPayload) => {
+        const result = ControlSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, voterId } = result.data;
+
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
+
         try {
             const current = await prisma.queueItem.findFirst({ where: { voteSessionId: sessionId, status: 'PLAYING' } });
             const previous = await prisma.queueItem.findFirst({ where: { voteSessionId: sessionId, status: 'PLAYED' }, orderBy: { updatedAt: 'desc' } });
@@ -411,8 +567,13 @@ app.prepare().then(() => {
 
     // --- ADMIN / MANAGEMENT ---
 
-    socket.on('force-play', async ({ sessionId, songData, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'forcePlay'))) return;
+    socket.on('force-play', async (rawPayload) => {
+        const result = ForcePlaySchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, songData, voterId } = result.data;
+
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'forcePlay'))) return;
+
         try {
             // Save Metadata
             await prisma.song.upsert({
@@ -436,16 +597,26 @@ app.prepare().then(() => {
         } catch (e) { console.error("Force Play Error", e); }
     });
 
-    socket.on('remove-song', async ({ sessionId, queueItemId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'manageQueue'))) return;
+    socket.on('remove-song', async (rawPayload) => {
+        const result = ControlSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, queueItemId, voterId } = result.data;
+        if (!queueItemId) return;
+
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'manageQueue'))) return;
         try {
             await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'REJECTED' } });
             await broadcastState(io, sessionId);
         } catch (e) {}
     });
 
-    socket.on('ban-suggester', async ({ sessionId, queueItemId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'manageUsers'))) return;
+    socket.on('ban-suggester', async (rawPayload) => {
+        const result = ControlSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, queueItemId, voterId } = result.data;
+        if (!queueItemId) return;
+
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'manageUsers'))) return;
         try {
             const item = await prisma.queueItem.findUnique({ where: { id: queueItemId }, include: { guest: true } });
             if (item && item.suggestedByGuestId) {
@@ -456,8 +627,13 @@ app.prepare().then(() => {
         } catch (e) {}
     });
 
-    socket.on('admin-reset-timer', async ({ sessionId, targetUserId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'manageUsers'))) return;
+    socket.on('admin-reset-timer', async (rawPayload) => {
+        // Need custom schema for targetUserId
+        const result = z.object({ sessionId: SessionIdSchema, targetUserId: z.string().optional(), voterId: z.string().uuid() }).safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, targetUserId, voterId } = result.data;
+
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'manageUsers'))) return;
         try {
             if (targetUserId) {
                 await redis.del(`session_votes:${sessionId}:${targetUserId}`);
@@ -479,8 +655,12 @@ app.prepare().then(() => {
         } catch (e) { console.error("Admin Reset Error", e); }
     });
 
-    socket.on('clear-session', async ({ sessionId, voterId }) => {
-        if (!(await checkPermission(sessionId, voterId, 'manageQueue'))) return;
+    socket.on('clear-session', async (rawPayload) => {
+        const result = ControlSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, voterId } = result.data;
+
+        if (!voterId || !(await checkPermission(sessionId, voterId, 'manageQueue'))) return;
         try {
             await prisma.queueItem.deleteMany({ where: { voteSessionId: sessionId } });
             await redis.del(`session_playback:${sessionId}`);
@@ -490,7 +670,11 @@ app.prepare().then(() => {
     });
 
     // --- MODERATION ---
-    socket.on('approve-song', async ({ itemId, sessionId }) => {
+    socket.on('approve-song', async (rawPayload) => {
+        const result = ModSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { itemId, sessionId } = result.data;
+        
         try {
             await prisma.queueItem.update({ where: { id: itemId }, data: { status: 'LIVE' } });
             await broadcastState(io, sessionId);
@@ -499,7 +683,11 @@ app.prepare().then(() => {
         } catch(e) {}
     });
 
-    socket.on('reject-song', async ({ itemId, sessionId }) => {
+    socket.on('reject-song', async (rawPayload) => {
+        const result = ModSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { itemId, sessionId } = result.data;
+
         try {
             await prisma.queueItem.update({ where: { id: itemId }, data: { status: 'REJECTED' } });
             const pending = await prisma.queueItem.findMany({ where: { voteSessionId: sessionId, status: 'PENDING' }, include: { song: true }, orderBy: { createdAt: 'asc' } });

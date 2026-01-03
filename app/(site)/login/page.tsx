@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: app/(site)/login/page.tsx
-// ========================================================================
-
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { loginUser } from '@/lib/auth';

@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: app/(site)/page.tsx
-// ========================================================================
-
 import Link from 'next/link';
 import { PlayCircle, Users, BarChart3, Radio } from 'lucide-react';
 import { createDemoSession } from '@/app/actions';

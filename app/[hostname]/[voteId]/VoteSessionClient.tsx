@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: app/[hostname]/[voteId]/VoteSessionClient.tsx
-// ========================================================================
-
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';

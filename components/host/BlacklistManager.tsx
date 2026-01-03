@@ -1,7 +1,3 @@
-// ========================================================================
-// FILE: components/host/BlacklistManager.tsx
-// ========================================================================
-
 'use client';
 
 import { useState, useEffect } from 'react';
