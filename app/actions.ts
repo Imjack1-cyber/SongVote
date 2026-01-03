@@ -10,6 +10,7 @@ import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
+import { searchYouTube } from '@/lib/youtube';
 
 // --- DEMO MODE ---
 
@@ -109,6 +110,82 @@ export async function saveYoutubeCredentials(formData: FormData) {
     revalidatePath(`/${user.username}/settings`);
 }
 
+// --- COLLECTION MANAGEMENT ---
+
+export async function createCollection(formData: FormData) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error('Unauthorized');
+    const title = formData.get('title') as string;
+    const sessionId = formData.get('sessionId') as string;
+
+    if (!title) return;
+
+    await prisma.songCollection.create({
+        data: {
+            hostId: user.userId,
+            title: title
+        }
+    });
+    
+    if (sessionId) {
+        revalidatePath(`/${user.username}/${sessionId}/settings`);
+    } else {
+        revalidatePath(`/${user.username}`);
+    }
+}
+
+export async function bulkImportSongs(formData: FormData) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error('Unauthorized');
+
+    const collectionId = formData.get('collectionId') as string;
+    const rawText = formData.get('rawText') as string;
+    const sessionId = formData.get('sessionId') as string;
+
+    if (!collectionId || !rawText) return;
+
+    const lines = rawText.split(/\r?\n/).filter(line => line.trim().length > 0);
+    const limit = 50; 
+    const tracksToProcess = lines.slice(0, limit);
+
+    for (const line of tracksToProcess) {
+        try {
+            const query = line.trim();
+            const results = await searchYouTube(query, user.userId, false);
+            
+            if (results.length > 0) {
+                const track = results[0]; 
+
+                await prisma.song.upsert({
+                    where: { id: track.id },
+                    update: {},
+                    create: {
+                        id: track.id,
+                        title: track.title,
+                        artist: track.artist,
+                        album: 'Imported',
+                        albumArtUrl: track.albumArtUrl,
+                        durationMs: track.durationMs || 0
+                    }
+                });
+
+                await prisma.collectionItem.create({
+                    data: {
+                        collectionId,
+                        songId: track.id
+                    }
+                }).catch(() => {}); 
+            }
+        } catch (e) {
+            console.error(`Failed to import: ${line}`, e);
+        }
+    }
+
+    if (sessionId) {
+        revalidatePath(`/${user.username}/${sessionId}/settings`);
+    }
+}
+
 // --- SESSION MANAGEMENT ---
 
 export async function createSession(formData: FormData) {
@@ -140,18 +217,52 @@ export async function deleteSession(formData: FormData) {
 export async function updateSessionRules(formData: FormData) {
   const user = await getCurrentUser();
   if (!user) throw new Error('Unauthorized');
+  
   const sessionId = formData.get('sessionId') as string;
   const requireVerification = formData.get('requireVerification') === 'on';
   const votesPerUser = parseInt(formData.get('votesPerUser') as string) || 5;
   const cycleDelay = parseInt(formData.get('cycleDelay') as string) || 0;
   const startTimeStr = formData.get('startTime') as string;
   const endTimeStr = formData.get('endTime') as string;
+  
+  const backupPlaylistId = formData.get('backupPlaylistId') as string;
+  const backupCollectionId = formData.get('backupCollectionId') as string;
+  const autoAddToCollectionId = formData.get('autoAddToCollectionId') as string;
+
+  const enableReactions = formData.get('enableReactions') === 'on';
+  const enableDuplicateCheck = formData.get('enableDuplicateCheck') === 'on';
+  const enableRegionCheck = formData.get('enableRegionCheck') === 'on';
+
+  let cleanedPlaylistId = null;
+  if (backupPlaylistId) {
+      const match = backupPlaylistId.match(/[?&]list=([^#\&\?]+)/);
+      cleanedPlaylistId = match ? match[1] : backupPlaylistId;
+  }
+
   const startTime = startTimeStr ? new Date(startTimeStr) : null;
   const endTime = endTimeStr ? new Date(endTimeStr) : null;
+  
   await prisma.voteSession.update({
     where: { id: sessionId, hostId: user.userId },
-    data: { requireVerification, votesPerUser, cycleDelay, startTime, endTime }
+    data: { 
+        requireVerification, 
+        votesPerUser, 
+        cycleDelay, 
+        startTime, 
+        endTime,
+        backupPlaylistId: cleanedPlaylistId,
+        backupCollectionId: backupCollectionId || null,
+        autoAddToCollectionId: autoAddToCollectionId || null,
+        enableReactions,
+        enableDuplicateCheck,
+        enableRegionCheck
+    }
   });
+  
+  if (cleanedPlaylistId) {
+      await redis.del(`radio_playlist:${cleanedPlaylistId}`);
+  }
+
   revalidatePath(`/${user.username}/${sessionId}/settings`);
 }
 
@@ -253,7 +364,19 @@ export async function getSessionStats(sessionId: string) {
         const cooldownKey = `session_cooldown:${sessionId}:${u.id}`;
         const votesUsed = await redis.scard(historyKey);
         const ttl = await redis.ttl(cooldownKey);
-        stats.push({ id: u.id, name: u.name, votesUsed, timeLeft: ttl > 0 ? ttl : 0, permissions: u.permissions, isHost: u.isHost });
+        
+        const dbGuest = guests.find(g => g.id === u.id);
+        const karma = dbGuest ? dbGuest.karma : 0;
+
+        stats.push({ 
+            id: u.id, 
+            name: u.name, 
+            votesUsed, 
+            timeLeft: ttl > 0 ? ttl : 0, 
+            permissions: u.permissions, 
+            isHost: u.isHost,
+            karma 
+        });
     }
     return stats;
 }

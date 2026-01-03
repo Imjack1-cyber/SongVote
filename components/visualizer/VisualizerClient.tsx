@@ -5,6 +5,7 @@ import { useSocket } from '@/hooks/useSocket';
 import QRCode from 'react-qr-code';
 import Image from 'next/image';
 import { Music2 } from 'lucide-react';
+import ReactionOverlay from '@/components/host/ReactionOverlay';
 
 interface VisualizerProps {
   voteId: string;
@@ -12,9 +13,12 @@ interface VisualizerProps {
   initialCurrent: any;
   sessionTitle: string;
   hostname: string;
+  enableReactions: boolean;
 }
 
-export default function VisualizerClient({ voteId, initialQueue, initialCurrent, sessionTitle, hostname }: VisualizerProps) {
+export default function VisualizerClient({ 
+    voteId, initialQueue, initialCurrent, sessionTitle, hostname, enableReactions 
+}: VisualizerProps) {
   const { socket } = useSocket(voteId);
   const [queue, setQueue] = useState(initialQueue);
   const [currentSong, setCurrentSong] = useState(initialCurrent);
@@ -22,26 +26,32 @@ export default function VisualizerClient({ voteId, initialQueue, initialCurrent,
 
   useEffect(() => {
       if (typeof window !== 'undefined') {
-          // Construct join URL
           setJoinUrl(`${window.location.origin}/join`);
       }
   }, []);
 
   useEffect(() => {
     if (!socket) return;
+    
+    // State Sync
     socket.on('state-update', ({ queue, current }) => {
-        setQueue(queue.slice(0, 5)); // Keep list short for TV
+        setQueue(queue.slice(0, 5)); 
         setCurrentSong(current);
     });
-    // Join room without host permissions
+
     socket.emit('join-room', voteId);
     
-    return () => { socket.off('state-update'); };
+    return () => { 
+        socket.off('state-update'); 
+    };
   }, [socket, voteId]);
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col overflow-hidden font-sans">
+    <div className="min-h-screen bg-black text-white flex flex-col overflow-hidden font-sans relative">
       
+      {/* Feature: Reactions */}
+      {enableReactions && <ReactionOverlay sessionId={voteId} />}
+
       {/* Background Ambience */}
       {currentSong && (
           <div 
@@ -60,19 +70,21 @@ export default function VisualizerClient({ voteId, initialQueue, initialCurrent,
               <h1 className="text-4xl font-black tracking-tight">{sessionTitle}</h1>
               <p className="text-xl opacity-60">Hosted by {hostname}</p>
           </div>
-          <div className="text-right">
-              <div className="bg-white p-2 rounded-xl inline-block shadow-xl">
-                  {joinUrl && <QRCode value={joinUrl} size={100} />}
+          <div className="text-right flex items-center gap-6">
+              <div>
+                <div className="bg-white p-2 rounded-xl inline-block shadow-xl">
+                    {joinUrl && <QRCode value={joinUrl} size={100} />}
+                </div>
+                <p className="mt-2 font-mono font-bold tracking-widest text-lg text-center">SCAN TO VOTE</p>
               </div>
-              <p className="mt-2 font-mono font-bold tracking-widest text-lg">SCAN TO VOTE</p>
           </div>
       </header>
 
       {/* Main Content */}
       <main className="relative z-10 flex-1 flex gap-12 p-12">
           
-          {/* NOW PLAYING (Left, Large) */}
-          <div className="flex-1 flex flex-col justify-center items-center text-center space-y-8">
+          {/* NOW PLAYING (Left) */}
+          <div className="flex-1 flex flex-col justify-center items-center text-center space-y-8 relative">
               <div className="relative w-[50vh] h-[50vh] rounded-3xl overflow-hidden shadow-2xl ring-4 ring-white/10">
                   {currentSong ? (
                       <Image src={currentSong.song.albumArtUrl} alt="Art" fill className="object-cover" />
@@ -92,7 +104,7 @@ export default function VisualizerClient({ voteId, initialQueue, initialCurrent,
               </div>
           </div>
 
-          {/* UP NEXT (Right, List) */}
+          {/* UP NEXT (Right) */}
           <div className="w-1/3 bg-white/5 backdrop-blur-md rounded-3xl p-8 border border-white/10 flex flex-col">
               <h3 className="text-2xl font-bold mb-6 flex items-center gap-3">
                   <span className="w-2 h-8 bg-[var(--accent)] rounded-full"/> 

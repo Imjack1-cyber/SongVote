@@ -42,12 +42,13 @@ export default async function VotePage({ params }: VotePageProps) {
   const initialHistory = await prisma.queueItem.findMany({
     where: { voteSessionId: params.voteId, status: 'PLAYED' },
     include: { song: true },
-    orderBy: { updatedAt: 'asc' } 
+    orderBy: { updatedAt: 'desc' }
   });
 
   // 4. User Stats
   let initialSubmittedIds: string[] = [];
   let initialTimeLeft = 0;
+  let userPermissions = null;
 
   if (voterId) {
       const historyKey = `session_votes:${params.voteId}:${voterId}`;
@@ -56,6 +57,13 @@ export default async function VotePage({ params }: VotePageProps) {
       const cooldownKey = `session_cooldown:${params.voteId}:${voterId}`;
       const ttl = await redis.ttl(cooldownKey);
       initialTimeLeft = ttl > 0 ? ttl : 0;
+
+      if (!isHost) {
+          const guest = await prisma.guestAccount.findUnique({ where: { id: voterId } });
+          if (guest) {
+              userPermissions = guest.permissions;
+          }
+      }
   }
 
   const syncKey = `session_playback:${params.voteId}`;
@@ -76,6 +84,8 @@ export default async function VotePage({ params }: VotePageProps) {
       cycleDelayMinutes={session.cycleDelay}
       initialSubmittedIds={initialSubmittedIds}
       initialTimeLeft={initialTimeLeft}
+      userPermissions={userPermissions}
+      enableReactions={session.enableReactions}
     />
   );
 }

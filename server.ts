@@ -9,6 +9,7 @@ import { checkRateLimit } from './lib/ratelimit';
 import { z } from 'zod';
 import * as cookie from 'cookie';
 import { jwtVerify } from 'jose';
+import { getPlaylistItems, searchYouTube, YouTubeSearchResult } from './lib/youtube';
 
 const prisma = new PrismaClient();
 
@@ -47,7 +48,6 @@ async function getUserIdFromSocket(socket: any): Promise<string | null> {
 
 // --- ZOD SCHEMAS ---
 
-// FIX: Session IDs are alphanumeric strings (from generateVoteId), not UUIDs.
 const SessionIdSchema = z.string().min(1);
 
 const SongDataSchema = z.object({
@@ -105,6 +105,12 @@ const ModSchema = z.object({
     sessionId: SessionIdSchema
 });
 
+const ReactionSchema = z.object({
+    sessionId: SessionIdSchema,
+    type: z.enum(['fire', 'heart', 'party', 'poop']),
+    voterId: z.string().optional()
+});
+
 // --- STATE HELPERS ---
 
 const getPlaybackState = async (sessionId: string) => {
@@ -119,9 +125,34 @@ const setPlaybackState = async (sessionId: string, state: any) => {
     await redis.expire(key, 60 * 60 * 24); 
 };
 
+// --- HELPER: AUTO-ADD TO COLLECTION ---
+const handleAutoAdd = async (sessionId: string, songId: string) => {
+    try {
+        const session = await prisma.voteSession.findUnique({
+            where: { id: sessionId },
+            select: { autoAddToCollectionId: true }
+        });
+
+        if (session && session.autoAddToCollectionId) {
+            await prisma.collectionItem.create({
+                data: {
+                    collectionId: session.autoAddToCollectionId,
+                    songId: songId
+                }
+            }).catch((err) => {
+                // Ignore unique constraint violations (duplicates) silently
+                if (err.code !== 'P2002') {
+                   console.error("Auto-Add Error", err);
+                }
+            });
+        }
+    } catch (e) {
+        console.error("Auto-Add Context Error", e);
+    }
+};
+
 /**
- * Checks if queue is empty. If so, picks a random song from history
- * and inserts it DIRECTLY as 'PLAYING'. 
+ * SMART RADIO LOGIC
  */
 const playRadioSong = async (sessionId: string) => {
     // 1. Check if Queue has items
@@ -129,42 +160,135 @@ const playRadioSong = async (sessionId: string) => {
         where: { voteSessionId: sessionId, status: 'LIVE' }
     });
 
-    if (queueCount > 0) return null; // Queue has songs, no need for radio
+    if (queueCount > 0) return null; 
 
-    // 2. Get History
-    const candidates = await prisma.queueItem.findMany({
-        where: { voteSessionId: sessionId, status: 'PLAYED' },
-        select: { songId: true },
-        distinct: ['songId']
+    const session = await prisma.voteSession.findUnique({ 
+        where: { id: sessionId } 
     });
+    if (!session) return null;
 
-    if (candidates.length === 0) return null;
+    let selectedSong: { id: string, title: string, artist: string, albumArtUrl: string | null } | null = null;
 
-    // 3. Filter out the very last played song to avoid back-to-back repeats
-    const lastPlayed = await prisma.queueItem.findFirst({
-        where: { voteSessionId: sessionId, status: 'PLAYED' },
-        orderBy: { updatedAt: 'desc' }
-    });
+    // 2. Try Internal Collection (Preferred)
+    if (session.backupCollectionId) {
+        const items = await prisma.collectionItem.findMany({
+            where: { collectionId: session.backupCollectionId },
+            include: { song: true }
+        });
 
-    let pool = candidates;
-    if (pool.length > 1 && lastPlayed) {
-        pool = pool.filter(c => c.songId !== lastPlayed.songId);
+        if (items.length > 0) {
+            const lastPlayed = await prisma.queueItem.findFirst({
+                where: { voteSessionId: sessionId, status: 'PLAYED' },
+                orderBy: { updatedAt: 'desc' }
+            });
+
+            let pool = items;
+            if (lastPlayed && pool.length > 1) {
+                pool = pool.filter(i => i.songId !== lastPlayed.songId);
+            }
+            if (pool.length === 0) pool = items;
+
+            const randomItem = pool[Math.floor(Math.random() * pool.length)];
+            selectedSong = randomItem.song;
+        }
     }
 
-    // 4. Pick Random
-    const randomIndex = Math.floor(Math.random() * pool.length);
-    const songId = pool[randomIndex].songId;
+    // 3. Try YouTube Backup Playlist
+    if (!selectedSong && session.backupPlaylistId) {
+        const cacheKey = `radio_playlist:${session.backupPlaylistId}`;
+        let playlistItems: YouTubeSearchResult[] = [];
+        
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+            playlistItems = JSON.parse(cached);
+        } else {
+            try {
+                playlistItems = await getPlaylistItems(session.backupPlaylistId, session.hostId);
+                if (playlistItems.length > 0) {
+                    await redis.set(cacheKey, JSON.stringify(playlistItems));
+                    await redis.expire(cacheKey, 60 * 60 * 24); 
+                }
+            } catch (e) {
+                console.error("Radio Playlist Fetch Failed", e);
+            }
+        }
 
-    console.log(`[RADIO] Queue empty. Playing history track: ${songId}`);
+        if (playlistItems.length > 0) {
+            const lastPlayed = await prisma.queueItem.findFirst({
+                where: { voteSessionId: sessionId, status: 'PLAYED' },
+                orderBy: { updatedAt: 'desc' }
+            });
 
-    // 5. Create as PLAYING (Bypasses Voting Queue)
+            let pool = playlistItems;
+            if (lastPlayed && pool.length > 1) {
+                pool = pool.filter(p => p.id !== lastPlayed.songId);
+            }
+            if (pool.length === 0) pool = playlistItems;
+
+            const randomTrack = pool[Math.floor(Math.random() * pool.length)];
+            selectedSong = {
+                id: randomTrack.id,
+                title: randomTrack.title,
+                artist: randomTrack.artist,
+                albumArtUrl: randomTrack.albumArtUrl
+            };
+        }
+    }
+
+    // 4. Fallback: Smart History
+    if (!selectedSong) {
+        const history = await prisma.queueItem.findMany({
+            where: { voteSessionId: sessionId, status: 'PLAYED' },
+            select: { songId: true, song: true },
+            orderBy: { updatedAt: 'desc' },
+            take: 50 
+        });
+
+        if (history.length > 0) {
+            const bufferSize = Math.min(5, Math.floor(history.length * 0.5));
+            const recentIds = new Set(history.slice(0, bufferSize).map(h => h.songId));
+            
+            const allPlayedIds = await prisma.queueItem.findMany({
+                where: { voteSessionId: sessionId, status: 'PLAYED' },
+                select: { songId: true, song: true },
+                distinct: ['songId']
+            });
+
+            const validPool = allPlayedIds.filter(item => !recentIds.has(item.songId));
+            const finalPool = validPool.length > 0 ? validPool : (allPlayedIds.length > 1 ? allPlayedIds.slice(1) : allPlayedIds);
+            
+            if (finalPool.length > 0) {
+                const randomItem = finalPool[Math.floor(Math.random() * finalPool.length)];
+                selectedSong = randomItem.song;
+            }
+        }
+    }
+
+    if (!selectedSong) return null; 
+
+    // Upsert Song Metadata
+    await prisma.song.upsert({
+        where: { id: selectedSong.id },
+        update: {},
+        create: {
+            id: selectedSong.id,
+            title: selectedSong.title,
+            artist: selectedSong.artist,
+            album: 'Radio',
+            albumArtUrl: selectedSong.albumArtUrl,
+            durationMs: 0
+        }
+    });
+
+    // Create item marked as RADIO
     const radioItem = await prisma.queueItem.create({
         data: {
             voteSessionId: sessionId,
-            songId: songId,
+            songId: selectedSong.id,
             status: 'PLAYING', 
             voteCount: 0, 
-            suggestedByGuestId: null 
+            suggestedByGuestId: null,
+            isRadio: true 
         }
     });
 
@@ -172,20 +296,17 @@ const playRadioSong = async (sessionId: string) => {
 };
 
 const broadcastState = async (io: Server, sessionId: string) => {
-    // 1. Get Live Queue
     const queue = await prisma.queueItem.findMany({
         where: { voteSessionId: sessionId, status: 'LIVE' },
         include: { song: true },
         orderBy: { voteCount: 'desc' }
     });
 
-    // 2. Get Currently Playing
     const current = await prisma.queueItem.findFirst({
         where: { voteSessionId: sessionId, status: 'PLAYING' },
         include: { song: true }
     });
 
-    // 3. Get Sync State
     const playbackState = await getPlaybackState(sessionId);
 
     io.to(sessionId).emit('state-update', { queue, current, playbackState });
@@ -207,9 +328,7 @@ app.prepare().then(() => {
     
     // --- JOIN LOGIC ---
     socket.on('join-room', async (roomId) => {
-      // Basic validation for roomId
       if (typeof roomId !== 'string' || roomId.length > 64) return;
-      
       socket.join(roomId);
       try { await broadcastState(io, roomId); } catch (e) { console.error(e); }
     });
@@ -217,16 +336,9 @@ app.prepare().then(() => {
     socket.on('join-host-room', async (roomId) => {
       if (typeof roomId !== 'string' || roomId.length > 64) return;
 
-      // SECURITY: Validate that the requester is actually the host
-      // Since the standard client doesn't send payload auth, we check cookies
       const userId = await getUserIdFromSocket(socket);
-      
-      if (!userId) {
-          // Silent fail or emit error for security
-          return;
-      }
+      if (!userId) return;
 
-      // Check DB if this user owns the session
       const session = await prisma.voteSession.findUnique({ 
           where: { id: roomId },
           select: { hostId: true }
@@ -245,13 +357,31 @@ app.prepare().then(() => {
       }
     });
 
+    // --- REACTION LOGIC ---
+    socket.on('send-reaction', async (rawPayload) => {
+        const result = ReactionSchema.safeParse(rawPayload);
+        if (!result.success) return;
+        const { sessionId, type, voterId } = result.data;
+
+        // Use IP fallback if no voterId (Host)
+        const limitId = voterId || socket.handshake.address;
+        
+        // Rate limit: 10 per 5 seconds
+        if (!(await checkRateLimit(`react:${limitId}`, 10, 5))) return;
+
+        const session = await prisma.voteSession.findUnique({ where: { id: sessionId }, select: { enableReactions: true }});
+        if (!session?.enableReactions) return;
+
+        // Broadcast to everyone in room, including sender
+        io.to(sessionId).emit('reaction', { type, id: Date.now() });
+    });
+
     // --- PLAYER SYNC ---
     socket.on('player-update', async (rawPayload) => {
         const result = PlayerUpdateSchema.safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, state, voterId } = result.data;
 
-        // SECURITY: Strict Permission Check
         if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
         if (!(await checkRateLimit(`sync:${voterId}`, 10, 2))) return;
 
@@ -282,18 +412,15 @@ app.prepare().then(() => {
         } catch (e) { console.error("Player Sync Error", e); }
     });
 
-    // --- SONG SUGGESTION ---
+    // --- SONG SUGGESTION (Soft Duplicate Check) ---
     socket.on('suggest-song', async (rawPayload) => {
       const result = SuggestSchema.safeParse(rawPayload);
       if (!result.success) {
-          // Log detailed error in dev for easier debugging
-          if (dev) console.error("Suggest Validation Failed:", result.error);
           socket.emit('error', 'Invalid song data format');
           return;
       }
       const { sessionId, songData, suggestedBy } = result.data;
 
-      // SECURITY: Fix Rate Limit Bypass (Fallback to IP/SocketID)
       const identifier = suggestedBy || socket.handshake.address || socket.id;
       if (!(await checkRateLimit(`suggest:${identifier}`, 5, 60))) {
           socket.emit('error', 'You are suggesting too fast. Please wait.');
@@ -320,12 +447,47 @@ app.prepare().then(() => {
             return;
         }
 
+        let forcePending = false;
+
+        // 1. DUPLICATE CHECK (Soft Fail)
+        if (session.enableDuplicateCheck) {
+            // Check if played in last 2 hours
+            const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+            const recentlyPlayed = await prisma.queueItem.findFirst({
+                where: {
+                    voteSessionId: sessionId,
+                    songId: songData.id,
+                    updatedAt: { gt: twoHoursAgo },
+                    status: 'PLAYED'
+                }
+            });
+            if (recentlyPlayed) {
+                // Soft Fail: Send to Host Approval
+                forcePending = true;
+                socket.emit('error', 'Played recently. Sent to host for approval.');
+            }
+        }
+
+        // 2. REGION CHECK (If Enabled)
+        if (session.enableRegionCheck) {
+            try {
+                // Perform a strict lookup for just this video
+                const [details] = await searchYouTube(`https://youtube.com/watch?v=${songData.id}`, session.hostId, true);
+                if (details && details.isPlayable === false) {
+                    socket.emit('error', 'This song is region-locked or not embeddable.');
+                    return;
+                }
+            } catch (err) {
+                console.error("Region Check Failed (Allowing fallback)", err);
+            }
+        }
+
         await prisma.song.upsert({
           where: { id: songData.id },
           update: {},
           create: {
             id: songData.id,
-            title: songData.title, // XSS note: Sanitization happens on render in frontend
+            title: songData.title,
             artist: songData.artist,
             album: songData.album || 'Unknown',
             albumArtUrl: songData.albumArtUrl,
@@ -346,10 +508,10 @@ app.prepare().then(() => {
           return;
         }
 
-        const status = session.requireVerification ? 'PENDING' : 'LIVE';
+        // Determine Status based on verification OR soft-duplicate-check
+        const status = (session.requireVerification || forcePending) ? 'PENDING' : 'LIVE';
         let validGuestId = null;
         if (suggestedBy) {
-            // Verify guest exists to enforce integrity
             const guest = await prisma.guestAccount.findUnique({ where: { id: suggestedBy } });
             if (guest && !guest.isBanned) validGuestId = suggestedBy;
         }
@@ -359,7 +521,8 @@ app.prepare().then(() => {
             voteSessionId: sessionId,
             songId: songData.id,
             status: status,
-            suggestedByGuestId: validGuestId 
+            suggestedByGuestId: validGuestId,
+            isRadio: false 
           }
         });
 
@@ -376,13 +539,12 @@ app.prepare().then(() => {
       } catch (e) { console.error("Suggest Error", e); }
     });
 
-    // --- BATCH VOTING (Limits & Cooldowns) ---
+    // --- BATCH VOTING ---
     socket.on('batch-vote', async (rawPayload) => {
         const result = BatchVoteSchema.safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, queueItemIds, voterId } = result.data;
 
-        // SECURITY: Lock to prevent race conditions (Double voting)
         const lockKey = `vote_lock:${sessionId}:${voterId}`;
         const isLocked = await redis.set(lockKey, 'locked', 'EX', 5, 'NX'); 
         
@@ -398,33 +560,28 @@ app.prepare().then(() => {
             const historyKey = `session_votes:${sessionId}:${voterId}`;
             const cooldownKey = `session_cooldown:${sessionId}:${voterId}`;
             
-            // 1. Check Cooldown
             const ttl = await redis.ttl(cooldownKey);
             if (ttl > 0) {
                 socket.emit('error', `Round active. Wait ${Math.ceil(ttl / 60)}m.`);
                 return;
             }
 
-            // 2. Check Limits
             const currentVoteCount = await redis.scard(historyKey);
             if ((currentVoteCount + queueItemIds.length) > session.votesPerUser) {
                 socket.emit('error', `Limit reached.`);
                 return;
             }
 
-            // 3. Filter Duplicates
             const alreadyVotedFor = await redis.smismember(historyKey, ...queueItemIds);
             const newVotes = queueItemIds.filter((_, index) => alreadyVotedFor[index] === 0);
 
             if (newVotes.length === 0) return;
 
-            // 4. DB Update
             const updatePromises = newVotes.map(id => 
                 prisma.queueItem.update({ where: { id }, data: { voteCount: { increment: 1 } } })
             );
             await prisma.$transaction(updatePromises);
 
-            // 5. Redis Update
             await redis.sadd(historyKey, ...newVotes);
             const expirySeconds = session.cycleDelay > 0 ? session.cycleDelay * 60 : 60 * 60 * 24;
             await redis.expire(historyKey, expirySeconds);
@@ -438,44 +595,51 @@ app.prepare().then(() => {
         } catch (e) { 
             console.error("Batch Vote Error", e); 
         } finally {
-            // Release lock immediately after processing
             await redis.del(lockKey);
         }
     });
 
-    // --- PLAYBACK TRANSITIONS (Atomic Swap) ---
-    
+    // --- PLAYBACK TRANSITIONS ---
     socket.on('song-transition', async (rawPayload) => {
         const result = TransitionSchema.safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, prevId, nextId, voterId } = result.data;
 
-        // SECURITY: Strict Permission Check
         if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
 
         try {
             const ops = [];
-            // 1. Archive Previous
+            // Handle Previous: Archive & Auto-Add
             if (prevId) {
                 ops.push(prisma.queueItem.update({ where: { id: prevId }, data: { status: 'PLAYED' } }));
+                
+                // TRIGGER AUTO-ADD & KARMA
+                const prevItem = await prisma.queueItem.findUnique({ where: { id: prevId } });
+                if (prevItem) {
+                    handleAutoAdd(sessionId, prevItem.songId);
+                    // GAMIFICATION: Award Karma
+                    if (prevItem.suggestedByGuestId) {
+                        await prisma.guestAccount.update({ 
+                            where: { id: prevItem.suggestedByGuestId }, 
+                            data: { karma: { increment: 10 } }
+                        });
+                    }
+                }
             }
             
-            // 2. Determine Next Song ID
             let newPlayingId = nextId;
 
-            // 3. Mark Next as PLAYING (if exists in Queue)
             if (nextId) {
                 ops.push(prisma.queueItem.update({ where: { id: nextId }, data: { status: 'PLAYING' } }));
             }
 
             if (ops.length > 0) await prisma.$transaction(ops);
 
-            // 4. RADIO LOGIC: If no next song provided (Queue Empty), trigger Radio
+            // RADIO LOGIC
             if (!newPlayingId) {
                 newPlayingId = await playRadioSong(sessionId);
             }
 
-            // 5. Sync State Update
             if (newPlayingId) {
                 const song = await prisma.queueItem.findUnique({ where: { id: newPlayingId }, select: { songId: true }});
                 if(song) {
@@ -487,7 +651,6 @@ app.prepare().then(() => {
                     });
                 }
             } else {
-                // If Radio failed (empty history) and no queue -> Stop
                 await redis.del(`session_playback:${sessionId}`);
             }
 
@@ -495,22 +658,23 @@ app.prepare().then(() => {
         } catch (e) { console.error("Transition Error", e); }
     });
 
-    // --- PLAYBACK HELPERS ---
-
     socket.on('song-started', async (rawPayload) => {
         const result = ControlSchema.safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, queueItemId, voterId } = result.data;
         if (!queueItemId) return;
 
-        // SECURITY: Strict Check
         if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
 
         try {
-            // Cleanup any stuck PLAYING items
+            const currentlyPlaying = await prisma.queueItem.findMany({ where: { voteSessionId: sessionId, status: 'PLAYING' } });
+            
+            // Archive old songs
+            for (const item of currentlyPlaying) {
+                handleAutoAdd(sessionId, item.songId);
+            }
             await prisma.queueItem.updateMany({ where: { voteSessionId: sessionId, status: 'PLAYING' }, data: { status: 'PLAYED' } });
             
-            // Promote new item
             await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'PLAYING' } });
             
             const song = await prisma.queueItem.findUnique({ where: { id: queueItemId }, select: { songId: true }});
@@ -532,11 +696,17 @@ app.prepare().then(() => {
         const { sessionId, queueItemId, voterId } = result.data;
         if (!queueItemId) return;
 
-        // SECURITY: FIX BYPASS - Require voterId and Check permission
         if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
 
         try {
             await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'PLAYED' } });
+            
+            const item = await prisma.queueItem.findUnique({ where: { id: queueItemId } });
+            if (item) {
+                await handleAutoAdd(sessionId, item.songId);
+                if (item.suggestedByGuestId) await prisma.guestAccount.update({ where: { id: item.suggestedByGuestId }, data: { karma: { increment: 10 } }});
+            }
+
             await redis.del(`session_playback:${sessionId}`);
             await broadcastState(io, sessionId);
         } catch (e) { console.error("End Error", e); }
@@ -565,8 +735,6 @@ app.prepare().then(() => {
         } catch (e) { console.error("Back Error", e); }
     });
 
-    // --- ADMIN / MANAGEMENT ---
-
     socket.on('force-play', async (rawPayload) => {
         const result = ForcePlaySchema.safeParse(rawPayload);
         if (!result.success) return;
@@ -575,21 +743,18 @@ app.prepare().then(() => {
         if (!voterId || !(await checkPermission(sessionId, voterId, 'forcePlay'))) return;
 
         try {
-            // Save Metadata
             await prisma.song.upsert({
                 where: { id: songData.id },
                 update: {},
                 create: { id: songData.id, title: songData.title, artist: songData.artist, album: 'Force Played', albumArtUrl: songData.albumArtUrl, durationMs: 0 }
             });
-            // Archive Current
             await prisma.queueItem.updateMany({ where: { voteSessionId: sessionId, status: 'PLAYING' }, data: { status: 'PLAYED' } });
             
-            // Check Existing in Queue
             const existing = await prisma.queueItem.findFirst({ where: { voteSessionId: sessionId, status: 'LIVE', songId: songData.id } });
             if (existing) {
                 await prisma.queueItem.update({ where: { id: existing.id }, data: { status: 'PLAYING', voteCount: 999 } });
             } else {
-                await prisma.queueItem.create({ data: { voteSessionId: sessionId, songId: songData.id, status: 'PLAYING', voteCount: 999 } });
+                await prisma.queueItem.create({ data: { voteSessionId: sessionId, songId: songData.id, status: 'PLAYING', voteCount: 999, isRadio: false } });
             }
             
             await setPlaybackState(sessionId, { status: 'playing', videoId: songData.id, startTime: Date.now(), timestamp: Date.now() });
@@ -628,7 +793,6 @@ app.prepare().then(() => {
     });
 
     socket.on('admin-reset-timer', async (rawPayload) => {
-        // Need custom schema for targetUserId
         const result = z.object({ sessionId: SessionIdSchema, targetUserId: z.string().optional(), voterId: z.string().uuid() }).safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, targetUserId, voterId } = result.data;
@@ -640,7 +804,6 @@ app.prepare().then(() => {
                 await redis.del(`session_cooldown:${sessionId}:${targetUserId}`);
                 io.to(sessionId).emit('timer-reset', { targetUserId });
             } else {
-                // Reset All
                 const guests = await prisma.guestAccount.findMany({ where: { voteSessionId: sessionId } });
                 const session = await prisma.voteSession.findUnique({ where: { id: sessionId }});
                 const allIds = [session?.hostId, ...guests.map(g => g.id)].filter(Boolean) as string[];
@@ -669,7 +832,6 @@ app.prepare().then(() => {
         } catch (e) { console.error("Clear Session Error", e); }
     });
 
-    // --- MODERATION ---
     socket.on('approve-song', async (rawPayload) => {
         const result = ModSchema.safeParse(rawPayload);
         if (!result.success) return;

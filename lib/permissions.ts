@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from './db';
 
 export type PermissionType = 'controlPlayer' | 'forcePlay' | 'manageQueue' | 'manageUsers' | 'printCards';
 
@@ -23,7 +21,6 @@ export const DEFAULT_PERMISSIONS: Permissions = {
 export async function checkPermission(sessionId: string, guestId: string | undefined, permission: PermissionType): Promise<boolean> {
     const session = await prisma.voteSession.findUnique({
         where: { id: sessionId },
-        include: { host: true } 
     });
 
     if (!session) return false;

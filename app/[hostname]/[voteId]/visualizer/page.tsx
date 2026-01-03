@@ -17,7 +17,7 @@ export default async function VisualizerPage({ params }: { params: { hostname: s
     where: { voteSessionId: params.voteId, status: 'LIVE' },
     include: { song: true },
     orderBy: { voteCount: 'desc' },
-    take: 5 // Only show top 5 on TV
+    take: 5 
   });
 
   const initialCurrent = await prisma.queueItem.findFirst({
@@ -32,6 +32,7 @@ export default async function VisualizerPage({ params }: { params: { hostname: s
         initialCurrent={initialCurrent}
         sessionTitle={session.title}
         hostname={params.hostname}
+        enableReactions={session.enableReactions}
     />
   );
 }

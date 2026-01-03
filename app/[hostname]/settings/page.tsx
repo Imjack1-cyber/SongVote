@@ -9,7 +9,7 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
   if (!user || user.username !== params.hostname) redirect(`/${params.hostname}`);
 
   const host = await prisma.host.findUnique({ where: { id: user.userId }, include: { settings: true } });
-  const hasKey = !!host?.youtubeApiKey;
+  const hasYoutubeKey = !!host?.youtubeApiKey;
 
   return (
     <div className="max-w-4xl mx-auto space-y-12 pb-20">
@@ -19,7 +19,7 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
         <p className="opacity-60">Manage your music source and page appearance.</p>
       </div>
 
-      {/* --- INTEGRATION SECTION --- */}
+      {/* --- YOUTUBE INTEGRATION SECTION --- */}
       <section className="space-y-6">
         <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2">
             <h2 className="text-xl font-bold text-red-600 flex items-center gap-2">
@@ -27,18 +27,18 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
             </h2>
         </div>
 
-        <div className={`card p-6 transition-all ${hasKey ? 'border-green-500/30 bg-green-50/50 dark:bg-green-900/10' : 'border-l-4 border-l-red-500'}`}>
+        <div className={`card p-6 transition-all ${hasYoutubeKey ? 'border-green-500/30 bg-green-50/50 dark:bg-green-900/10' : 'border-l-4 border-l-red-500'}`}>
             <div className="flex justify-between items-start mb-4">
                 <div>
                     <h3 className="font-bold flex items-center gap-2">
                         API Key Configuration
-                        {hasKey && <CheckCircle className="w-4 h-4 text-green-600" />}
+                        {hasYoutubeKey && <CheckCircle className="w-4 h-4 text-green-600" />}
                     </h3>
                     <p className="text-sm opacity-60">Required to search YouTube videos.</p>
                 </div>
             </div>
 
-            {!hasKey && (
+            {!hasYoutubeKey && (
                 <div className="mb-6 bg-[var(--surface)] p-4 rounded-lg border border-[var(--border)] text-sm">
                     <p className="font-bold mb-2">How to get a Free Key:</p>
                     <ol className="list-decimal list-inside space-y-1 opacity-80">
@@ -58,14 +58,14 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
                         <input 
                             name="youtubeApiKey" 
                             type="password" 
-                            placeholder={hasKey ? "•••••••••••••••••••••••• (Saved)" : "AIzaSy..."}
+                            placeholder={hasYoutubeKey ? "•••••••••••••••••••••••• (Saved)" : "AIzaSy..."}
                             className="w-full p-2.5 pl-10 rounded border border-[var(--border)] bg-[var(--background)] font-mono text-sm"
                         />
                         <Key className="absolute left-3 top-2.5 w-4 h-4 opacity-40" />
                     </div>
                 </div>
                 <button type="submit" className="btn-primary w-full">
-                    {hasKey ? 'Update Key' : 'Save Key'}
+                    {hasYoutubeKey ? 'Update Key' : 'Save Key'}
                 </button>
             </form>
         </div>

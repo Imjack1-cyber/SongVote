@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSocket } from '@/hooks/useSocket';
-import { Share2, Settings, Wifi, WifiOff, ShieldAlert, Check, Send, Clock, AlertCircle, Info, Trash2, Ban, History, Search, QrCode, Pause, SkipForward, Printer } from 'lucide-react';
+import { Share2, Settings, Wifi, WifiOff, ShieldAlert, Check, Send, Clock, AlertCircle, Info, Trash2, Ban, History, Search, QrCode, Pause, SkipForward, Printer, Radio } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import SongSearch from '@/components/vote/SongSearch';
@@ -10,6 +10,7 @@ import QueueList from '@/components/vote/QueueList';
 import ModerationQueue from '@/components/host/ModerationQueue';
 import HostPlayer from '@/components/host/HostPlayer';
 import QRCodeModal from '@/components/common/QRCodeModal';
+import ReactionOverlay from '@/components/host/ReactionOverlay';
 import { toast } from 'sonner';
 
 interface VoteSessionClientProps {
@@ -26,6 +27,7 @@ interface VoteSessionClientProps {
   initialSubmittedIds: string[];
   initialTimeLeft: number;
   userPermissions?: any;
+  enableReactions?: boolean;
 }
 
 export default function VoteSessionClient({ 
@@ -41,7 +43,8 @@ export default function VoteSessionClient({
   cycleDelayMinutes,
   initialSubmittedIds,
   initialTimeLeft,
-  userPermissions
+  userPermissions,
+  enableReactions
 }: VoteSessionClientProps) {
   
   const { socket, isConnected } = useSocket(voteId);
@@ -64,7 +67,6 @@ export default function VoteSessionClient({
   const canControlPlayer = isHost || userPermissions?.controlPlayer;
   const canPrint = isHost || userPermissions?.printCards;
 
-  // Filter History
   const filteredHistory = useMemo(() => {
       if (!historyFilter) return history;
       const lower = historyFilter.toLowerCase();
@@ -74,7 +76,6 @@ export default function VoteSessionClient({
       );
   }, [history, historyFilter]);
 
-  // Countdown Logic
   useEffect(() => {
     if (timeLeft <= 0) {
         if (submittedIds.size > 0 && initialTimeLeft > 0 && cycleDelayMinutes > 0) {
@@ -97,22 +98,16 @@ export default function VoteSessionClient({
     return () => clearInterval(interval);
   }, [timeLeft, initialTimeLeft, cycleDelayMinutes, submittedIds.size]);
 
-  // Socket Listeners
   useEffect(() => {
     if (!socket) return;
 
     socket.on('state-update', ({ queue, current, playbackState }: any) => {
         setQueue(queue);
-        
         setCurrentSong((prev: any) => {
-            if (prev && current && prev.id !== current.id) {
-                setHistory(h => [prev, ...h]);
-            } else if (prev && !current) {
-                setHistory(h => [prev, ...h]);
-            }
+            if (prev && current && prev.id !== current.id) setHistory(h => [prev, ...h]);
+            else if (prev && !current) setHistory(h => [prev, ...h]);
             return current;
         });
-
         if (playbackState) setPlaybackState(playbackState);
     });
 
@@ -164,7 +159,6 @@ export default function VoteSessionClient({
     };
   }, [socket, isHost, isConnected, voteId, voterId]);
 
-  // Handlers
   const handleSuggest = (songData: any) => {
     if (!socket || !voterId) return toast.error("Please join first.");
     socket.emit('suggest-song', { sessionId: voteId, songData, suggestedBy: voterId });
@@ -192,7 +186,6 @@ export default function VoteSessionClient({
 
   const handleSongStarted = useCallback((queueItemId: string) => {
       if (!socket) return;
-      // Optimistic Update
       const songToStart = queue.find(item => item.id === queueItemId);
       if (songToStart) {
           setCurrentSong(songToStart);
@@ -203,15 +196,11 @@ export default function VoteSessionClient({
 
   const handleSongEnded = useCallback((queueItemId: string) => {
       if (!socket) return;
-      
       const nextSong = queue.length > 0 ? queue[0] : null;
       const nextId = nextSong ? nextSong.id : null;
-
-      // Optimistic Update
       if (currentSong) setHistory(h => [currentSong, ...h]);
       setCurrentSong(nextSong);
       if (nextSong) setQueue(q => q.slice(1));
-      
       socket.emit('song-transition', { sessionId: voteId, prevId: queueItemId, nextId, voterId });
   }, [socket, queue, currentSong, voteId, voterId]);
 
@@ -249,6 +238,12 @@ export default function VoteSessionClient({
       }
   };
 
+  const handleReaction = (type: string) => {
+      // Allow Host OR Guest (voterId)
+      if (!socket || (!isHost && !voterId)) return;
+      socket.emit('send-reaction', { sessionId: voteId, type, voterId: voterId || 'HOST' });
+  };
+
   const handleApprove = (itemId: string) => socket?.emit('approve-song', { itemId, sessionId: voteId });
   const handleReject = (itemId: string) => socket?.emit('reject-song', { itemId, sessionId: voteId });
 
@@ -266,8 +261,11 @@ export default function VoteSessionClient({
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 pb-32">
+    <div className="max-w-3xl mx-auto space-y-8 pb-32 relative">
       
+      {/* Reaction Layer - Render for everyone if enabled */}
+      {enableReactions && <ReactionOverlay sessionId={voteId} />}
+
       <div className="flex items-start justify-between">
         <div>
             <div className="flex items-center gap-3 mb-2">
@@ -322,15 +320,30 @@ export default function VoteSessionClient({
       {isHost && <ModerationQueue pendingItems={pendingQueue} onApprove={handleApprove} onReject={handleReject} />}
 
       {!isHost && currentSong && (
-          <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded-xl flex items-center gap-4 shadow-sm animate-in slide-in-from-top-2">
+          <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded-xl flex items-center gap-4 shadow-sm animate-in slide-in-from-top-2 relative">
               <div className="w-12 h-12 bg-black rounded-lg overflow-hidden relative">
-                  <img src={currentSong.song.albumArtUrl || ''} className="object-cover w-full h-full" alt="" />
+                  <Image src={currentSong.song.albumArtUrl || ''} fill className="object-cover" alt="" />
               </div>
-              <div>
+              <div className="flex-1">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--accent)] mb-0.5">Now Playing</div>
                   <div className="font-bold text-sm line-clamp-1">{currentSong.song.title}</div>
                   <div className="text-xs opacity-60">{currentSong.song.artist}</div>
               </div>
+          </div>
+      )}
+
+      {/* REACTION BAR - Show for Guest OR Host if enabled */}
+      {enableReactions && (isHost || voterId) && (
+          <div className="flex justify-center gap-4 py-4 animate-in slide-in-from-bottom-4">
+              {['fire', 'heart', 'party', 'poop'].map(type => (
+                  <button 
+                    key={type} 
+                    onClick={() => handleReaction(type)}
+                    className="text-2xl hover:scale-125 transition-transform active:scale-90"
+                  >
+                      {type === 'fire' ? '🔥' : type === 'heart' ? '❤️' : type === 'party' ? '🎉' : '💩'}
+                  </button>
+              ))}
           </div>
       )}
 
@@ -390,7 +403,14 @@ export default function VoteSessionClient({
                           </div>
                           <div className="min-w-0 flex-1">
                               <div className="font-bold text-sm truncate">{item.song.title}</div>
-                              <div className="text-xs truncate opacity-70">{item.song.artist}</div>
+                              <div className="text-xs truncate opacity-70 flex items-center gap-2">
+                                  {item.song.artist}
+                                  {item.isRadio && (
+                                      <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1">
+                                          <Radio className="w-2.5 h-2.5" /> Auto
+                                      </span>
+                                  )}
+                              </div>
                           </div>
                       </div>
                   ))}

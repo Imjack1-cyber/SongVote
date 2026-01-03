@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getSessionHistory } from '@/app/actions';
-import { Download, History } from 'lucide-react';
+import { Download, History, Radio } from 'lucide-react';
 import Image from 'next/image';
 
 export default function HistoryView({ sessionId }: { sessionId: string }) {
@@ -15,7 +15,7 @@ export default function HistoryView({ sessionId }: { sessionId: string }) {
     const downloadCSV = () => {
         const headers = "Title,Artist,Played At,Requested By\n";
         const rows = history.map(item => 
-            `"${item.song.title}","${item.song.artist}","${new Date(item.updatedAt).toLocaleString()}","${item.guest?.username || 'Host'}"`
+            `"${item.song.title}","${item.song.artist}","${new Date(item.updatedAt).toLocaleString()}","${item.isRadio ? 'Radio Auto-Play' : (item.guest?.username || 'Host')}"`
         ).join("\n");
         
         const blob = new Blob([headers + rows], { type: 'text/csv' });
@@ -51,8 +51,14 @@ export default function HistoryView({ sessionId }: { sessionId: string }) {
                                 <span>{new Date(item.updatedAt).toLocaleTimeString()}</span>
                             </div>
                         </div>
-                        <div className="text-xs font-mono bg-[var(--foreground)]/5 px-2 py-1 rounded">
-                            {item.guest?.username || 'Host'}
+                        <div className={`text-xs font-mono px-2 py-1 rounded flex items-center gap-1 ${item.isRadio ? 'bg-indigo-100 text-indigo-700' : 'bg-[var(--foreground)]/5'}`}>
+                            {item.isRadio ? (
+                                <>
+                                    <Radio className="w-3 h-3" /> Auto-Play
+                                </>
+                            ) : (
+                                item.guest?.username || 'Host'
+                            )}
                         </div>
                     </div>
                 ))}

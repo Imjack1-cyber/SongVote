@@ -2,13 +2,15 @@ import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { updateSessionRules, generateGuests } from '@/app/actions';
-import { Clock, Users, Video, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Clock, Users, AlertTriangle, CheckCircle, Radio, Save, ToggleLeft } from 'lucide-react';
 import Link from 'next/link';
 import GuestList from '@/components/host/GuestList';
 import SessionManager from '@/components/host/SessionManager';
 import BlacklistManager from '@/components/host/BlacklistManager';
 import HistoryView from '@/components/host/HistoryView';
 import AnalyticsView from '@/components/host/AnalyticsView';
+import LibraryManager from '@/components/host/LibraryManager';
+import Leaderboard from '@/components/host/Leaderboard';
 
 export default async function VoteSettingsPage({ params }: { params: { hostname: string; voteId: string } }) {
     const user = await getCurrentUser();
@@ -28,6 +30,13 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
     });
 
     if (!session) return notFound();
+
+    // Fetch Host's Collections
+    const collections = await prisma.songCollection.findMany({
+        where: { hostId: user.userId },
+        include: { _count: { select: { items: true } } },
+        orderBy: { createdAt: 'desc' }
+    });
 
     const isYoutubeReady = !!session.host.youtubeApiKey;
 
@@ -50,7 +59,7 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                 {/* LEFT COLUMN (Operational) */}
                 <div className="lg:col-span-2 space-y-8">
                     
-                    {/* Live Session Manager (With FIX: passed currentUserId) */}
+                    {/* Live Session Manager */}
                     <div className="card p-6 print:hidden">
                         <SessionManager sessionId={session.id} currentUserId={user.userId} />
                     </div>
@@ -60,48 +69,102 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                         <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
                             <Clock className="w-5 h-5" /> Session Rules
                         </h2>
-                        <form action={updateSessionRules} className="grid md:grid-cols-2 gap-6">
+                        <form action={updateSessionRules} className="grid gap-6">
                             <input type="hidden" name="sessionId" value={session.id} />
                             
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium mb-1 opacity-80">Votes Per User</label>
-                                    <input name="votesPerUser" type="number" defaultValue={session.votesPerUser} className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" />
+                            {/* Feature Toggles */}
+                            <div className="grid md:grid-cols-2 gap-4 p-4 bg-[var(--foreground)]/5 rounded-xl border border-[var(--border)]">
+                                <h3 className="md:col-span-2 font-bold text-sm uppercase tracking-wider opacity-60 flex items-center gap-2">
+                                    <ToggleLeft className="w-4 h-4" /> Feature Toggles
+                                </h3>
+                                
+                                <div className="flex items-center justify-between">
+                                    <label className="text-sm font-medium">Hype Reactions</label>
+                                    <input type="checkbox" name="enableReactions" defaultChecked={session.enableReactions} className="w-5 h-5 accent-[var(--accent)]" />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1 opacity-80">Cycle Delay (Minutes)</label>
-                                    <input name="cycleDelay" type="number" defaultValue={session.cycleDelay} className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" />
+
+                                <div className="flex items-center justify-between">
+                                    <label className="text-sm font-medium">Duplicate Detection</label>
+                                    <input type="checkbox" name="enableDuplicateCheck" defaultChecked={session.enableDuplicateCheck} className="w-5 h-5 accent-[var(--accent)]" />
                                 </div>
-                                <div className="flex items-center gap-3 pt-4">
-                                    <input type="checkbox" name="requireVerification" defaultChecked={session.requireVerification} id="verify" className="w-5 h-5 rounded border-gray-300 text-[var(--accent)]" />
-                                    <label htmlFor="verify" className="text-sm font-medium">Require Verification</label>
+                                <div className="flex items-center justify-between">
+                                    <label className="text-sm font-medium">Region Lock Check</label>
+                                    <input type="checkbox" name="enableRegionCheck" defaultChecked={session.enableRegionCheck} className="w-5 h-5 accent-[var(--accent)]" />
                                 </div>
                             </div>
 
-                            <div className="space-y-4">
+                            <div className="grid md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1 opacity-80">Votes Per User</label>
+                                        <input name="votesPerUser" type="number" defaultValue={session.votesPerUser} className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1 opacity-80">Cycle Delay (Minutes)</label>
+                                        <input name="cycleDelay" type="number" defaultValue={session.cycleDelay} className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1 opacity-80">Start Time</label>
+                                        <input 
+                                            name="startTime" 
+                                            type="datetime-local" 
+                                            defaultValue={session.startTime ? new Date(session.startTime).toISOString().slice(0, 16) : ''}
+                                            className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" 
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-3 pt-8">
+                                        <input type="checkbox" name="requireVerification" defaultChecked={session.requireVerification} id="verify" className="w-5 h-5 rounded border-gray-300 text-[var(--accent)]" />
+                                        <label htmlFor="verify" className="text-sm font-medium">Require Verification</label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* RADIO & AUTO-SAVE */}
+                            <div className="pt-4 border-t border-[var(--border)] grid md:grid-cols-2 gap-6">
                                 <div>
-                                    <label className="block text-sm font-medium mb-1 opacity-80">Start Time</label>
+                                    <h3 className="font-bold text-sm mb-2 flex items-center gap-2 opacity-80">
+                                        <Radio className="w-4 h-4" /> Radio Backup Source
+                                    </h3>
+                                    <select 
+                                        name="backupCollectionId" 
+                                        defaultValue={session.backupCollectionId || ''}
+                                        className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)] mb-2"
+                                    >
+                                        <option value="">-- Internal Library (Preferred) --</option>
+                                        {collections.map(c => (
+                                            <option key={c.id} value={c.id}>{c.title} ({c._count.items} songs)</option>
+                                        ))}
+                                    </select>
                                     <input 
-                                        name="startTime" 
-                                        type="datetime-local" 
-                                        defaultValue={session.startTime ? new Date(session.startTime).toISOString().slice(0, 16) : ''}
+                                        name="backupPlaylistId" 
+                                        type="text" 
+                                        placeholder="Or YouTube Playlist URL..." 
+                                        defaultValue={session.backupPlaylistId || ''}
                                         className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" 
                                     />
                                 </div>
+
                                 <div>
-                                    <label className="block text-sm font-medium mb-1 opacity-80">End Time</label>
-                                    <input 
-                                        name="endTime" 
-                                        type="datetime-local" 
-                                        defaultValue={session.endTime ? new Date(session.endTime).toISOString().slice(0, 16) : ''}
-                                        className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" 
-                                    />
+                                    <h3 className="font-bold text-sm mb-2 flex items-center gap-2 opacity-80">
+                                        <Save className="w-4 h-4" /> Smart Library (Auto-Save)
+                                    </h3>
+                                    <select 
+                                        name="autoAddToCollectionId" 
+                                        defaultValue={session.autoAddToCollectionId || ''}
+                                        className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]"
+                                    >
+                                        <option value="">-- Disabled --</option>
+                                        {collections.map(c => (
+                                            <option key={c.id} value={c.id}>{c.title}</option>
+                                        ))}
+                                    </select>
                                 </div>
                             </div>
 
-                            <div className="md:col-span-2 pt-4">
-                                <button type="submit" className="btn-primary w-full md:w-auto">Save Rules</button>
-                            </div>
+                            <button type="submit" className="btn-primary w-full md:w-auto">Save All Changes</button>
                         </form>
                     </div>
 
@@ -133,6 +196,15 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                                 Fix in Global Settings
                             </Link>
                         )}
+                    </div>
+
+                    <div className="print:hidden">
+                        <Leaderboard sessionId={session.id} />
+                    </div>
+                    
+                    {/* Library Manager */}
+                    <div className="card p-6 print:hidden">
+                        <LibraryManager collections={collections} sessionId={session.id} />
                     </div>
 
                     {/* Blacklist */}
