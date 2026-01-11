@@ -4,7 +4,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
 import { redis } from './lib/redis';
-import Redis from 'ioredis'; // Need distinct client for Sub
+import Redis from 'ioredis';
 import { checkPermission } from './lib/permissions';
 import { checkRateLimit } from './lib/ratelimit';
 import { z } from 'zod';
@@ -333,7 +333,7 @@ app.prepare().then(() => {
     cors: { origin: '*' }
   });
 
-  // --- PUB/SUB HANDLER ---
+  // --- PUB/SUB LISTENER ---
   redisSub.on('message', (channel, message) => {
     if (channel === 'global_announcements') {
         try {
@@ -360,6 +360,15 @@ app.prepare().then(() => {
 
       const userId = await getUserIdFromSocket(socket);
       if (!userId) return;
+
+      // --- CRITICAL BAN/DELETED CHECK ---
+      const host = await prisma.host.findUnique({ where: { id: userId } });
+      if (!host || host.isBanned || host.deletedAt) {
+          // Immediately disconnect suspended users from their control room
+          socket.emit('error', 'Account suspended or deleted');
+          socket.disconnect(true);
+          return;
+      }
 
       const session = await prisma.voteSession.findUnique({ 
           where: { id: roomId },

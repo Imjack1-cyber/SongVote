@@ -12,6 +12,10 @@ model Host {
   username     String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+  
+  isBanned     Boolean  @default(false)
+  deletedAt    DateTime?
+  banReason    String?  
 
   youtubeApiKey     String?  
   tutorialCompleted Boolean  @default(false)

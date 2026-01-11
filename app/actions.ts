@@ -501,11 +501,16 @@ export async function getAdminDashboardData() {
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized Access: Super Admin Only");
 
     const [hostCount, sessionCount, activeSessionCount, totalVotesAgg, hosts, recentItems] = await Promise.all([
-        prisma.host.count(),
+        prisma.host.count({ where: { deletedAt: null } }),
         prisma.voteSession.count(),
         prisma.voteSession.count({ where: { isActive: true } }),
         prisma.queueItem.aggregate({ _sum: { voteCount: true } }),
-        prisma.host.findMany({ take: 20, orderBy: { createdAt: 'desc' }, include: { _count: { select: { votes: true } } } }),
+        prisma.host.findMany({ 
+            take: 20, 
+            orderBy: { createdAt: 'desc' }, 
+            // Return all hosts including banned/deleted so Admin can see them
+            include: { _count: { select: { votes: true } } } 
+        }),
         prisma.queueItem.findMany({ where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }, select: { createdAt: true } })
     ]);
 
@@ -521,9 +526,65 @@ export async function getAdminDashboardData() {
 
     return {
         kpis: { totalHosts: hostCount, totalSessions: sessionCount, activeSessions: activeSessionCount, totalVotes: totalVotesAgg._sum.voteCount || 0 },
-        hosts: hosts.map(h => ({ id: h.id, username: h.username, createdAt: h.createdAt, sessionCount: h._count.votes })),
+        hosts: hosts.map(h => ({ 
+            id: h.id, 
+            username: h.username, 
+            createdAt: h.createdAt, 
+            sessionCount: h._count.votes,
+            isBanned: h.isBanned,      
+            deletedAt: h.deletedAt,
+            banReason: h.banReason 
+        })),
         chart: chartArray
     };
+}
+
+// --- Host Management with Reasons ---
+export async function toggleHostBan(hostId: string, reason?: string) {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    const host = await prisma.host.findUnique({ where: { id: hostId } });
+    if (host) {
+        // Toggle Ban logic
+        const newBanStatus = !host.isBanned;
+        await prisma.host.update({ 
+            where: { id: hostId }, 
+            data: { 
+                isBanned: newBanStatus,
+                banReason: newBanStatus ? reason : null // Clear reason on unban
+            } 
+        });
+        revalidatePath('/admin');
+    }
+}
+
+export async function softDeleteHost(hostId: string, reason?: string) {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    await prisma.host.update({ 
+        where: { id: hostId }, 
+        data: { 
+            deletedAt: new Date(),
+            banReason: reason // Store reason for deletion in same field
+        } 
+    });
+    revalidatePath('/admin');
+}
+
+export async function restoreHost(hostId: string) {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    await prisma.host.update({ 
+        where: { id: hostId }, 
+        data: { 
+            deletedAt: null,
+            banReason: null // Clear reason on restore
+        } 
+    });
+    revalidatePath('/admin');
 }
 
 // --- GLOBAL ANNOUNCEMENTS ---
@@ -538,13 +599,8 @@ export async function sendGlobalAnnouncement(message: string, type: 'info' | 'wa
 
     const payload = { message, type, timestamp: Date.now() };
     
-    // 1. Persist for new users loading page
     await redis.set(ANNOUNCEMENT_KEY, JSON.stringify(payload));
-    
-    // 2. Broadcast via Pub/Sub to all connected sockets
-    // We publish to the channel that server.ts is listening to
     await redis.publish('global_announcements', JSON.stringify(payload));
-    
     revalidatePath('/');
 }
 
@@ -553,7 +609,7 @@ export async function clearGlobalAnnouncement() {
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
 
     await redis.del(ANNOUNCEMENT_KEY);
-    await redis.publish('global_announcements', JSON.stringify({ message: null })); // Signal clear
+    await redis.publish('global_announcements', JSON.stringify({ message: null })); 
     revalidatePath('/');
 }
 

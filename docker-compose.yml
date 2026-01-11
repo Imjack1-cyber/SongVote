@@ -11,8 +11,9 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://user:password@db:5432/songvote?schema=public
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=add_your_own_jwt_secret_here
-      - ENCRYPTION_KEY=add_your_own_encryption_key_here
+      - JWT_SECRET=add_your_jwt_secret_here
+      - ENCRYPTION_KEY=add_your_encryption_key_here
+      - SUPER_ADMIN_ID=add_super_admin_user_id_here
       - NEXT_PUBLIC_APP_URL=http://localhost:3000
     depends_on:
       - db

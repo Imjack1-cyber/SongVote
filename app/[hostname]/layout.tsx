@@ -1,10 +1,11 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import ThemeWrapper from '@/components/ThemeWrapper';
 import OnboardingTour from '@/components/tutorial/OnboardingTour';
+import SuspendedView from '@/components/common/SuspendedView'; 
 import { Metadata } from 'next';
 
 interface HostLayoutProps {
@@ -12,7 +13,6 @@ interface HostLayoutProps {
   params: { hostname: string };
 }
 
-// DYNAMIC METADATA for Favicon
 export async function generateMetadata({ params }: HostLayoutProps): Promise<Metadata> {
   const host = await prisma.host.findUnique({
     where: { username: params.hostname },
@@ -42,6 +42,18 @@ export default async function HostLayout({ children, params }: HostLayoutProps) 
 
   const currentUser = await getCurrentUser();
   const isOwner = currentUser?.userId === host.id;
+
+  // --- STRICT SECURITY CHECK ---
+  if (host.isBanned || host.deletedAt) {
+      // Return the specific Suspended Component directly to avoid redirect loops or 405s
+      return (
+        <SuspendedView 
+            reason={host.banReason} 
+            type={host.deletedAt ? 'DELETED' : 'BANNED'} 
+            isGuest={!isOwner}
+        />
+      );
+  }
 
   const themeConfig = {
     bgColor: host.settings?.bgColor || '#f8fafc',
