@@ -2,9 +2,11 @@ import { getAdminDashboardData } from '@/app/actions';
 import AdminDashboard from '@/components/admin/AdminDashboard';
 import AnnouncementControl from '@/components/admin/AnnouncementControl';
 import SystemHealthMonitor from '@/components/admin/SystemHealthMonitor';
-import AnalyticsDashboard from '@/components/admin/AnalyticsDashboard'; 
+import AnalyticsDashboard from '@/components/admin/AnalyticsDashboard';
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import Link from 'next/link'; // NEW
+import { MessageSquare } from 'lucide-react'; // NEW
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +22,16 @@ export default async function AdminPage() {
   return (
     <div className="space-y-12 pb-20">
         
+        {/* Header Actions Row */}
+        <div className="flex justify-end">
+            <Link 
+                href="/admin/feedback" 
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 text-sm font-bold text-gray-700 transition"
+            >
+                <MessageSquare className="w-4 h-4" /> View Feedback
+            </Link>
+        </div>
+
         {/* Row 1: Realtime Stats & Controls */}
         <div className="grid lg:grid-cols-2 gap-8">
             <AnnouncementControl />

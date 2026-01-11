@@ -102,9 +102,7 @@ model Song {
   album       String? 
   albumArtUrl String? 
   durationMs  Int
-  
   playCount   Int      @default(0)
-  
   cachedAt    DateTime @default(now())
   queueItems  QueueItem[]
   collectionItems CollectionItem[]
@@ -159,6 +157,17 @@ model Blacklist {
   createdAt DateTime @default(now())
 }
 
+model SystemFeedback {
+  id        String         @id @default(uuid())
+  content   String
+  type      FeedbackType
+  status    FeedbackStatus @default(OPEN)
+  
+  userId    String?        
+  
+  createdAt DateTime       @default(now())
+}
+
 enum QueueStatus {
   PENDING
   LIVE
@@ -170,4 +179,16 @@ enum QueueStatus {
 enum BlacklistType {
   SONG_ID
   KEYWORD
+}
+
+enum FeedbackType {
+  BUG
+  SUGGESTION
+  OTHER
+}
+
+enum FeedbackStatus {
+  OPEN
+  RESOLVED
+  ARCHIVED
 }

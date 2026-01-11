@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Heart } from 'lucide-react';
+import FeedbackTrigger from '@/components/common/FeedbackTrigger'; 
 
 export default function Footer({ hostName }: { hostName?: string }) {
   return (
@@ -16,6 +17,9 @@ export default function Footer({ hostName }: { hostName?: string }) {
              <Link href="/" className="hover:text-[var(--accent)] transition-colors">
                 Home
             </Link>
+            
+            <FeedbackTrigger /> 
+
             <span className="opacity-20">|</span>
             <div className="flex items-center gap-1">
                 <span>Made with</span>

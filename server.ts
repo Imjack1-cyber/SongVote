@@ -21,12 +21,17 @@ redis.on('error', (err) => {
     }
 });
 
-// --- REDIS SUBSCRIBER FOR GLOBAL ANNOUNCEMENTS ---
+// --- REDIS SUBSCRIBER ---
 // We need a separate connection because a client in Subscribe mode cannot issue commands
 const redisSub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
-redisSub.subscribe('global_announcements', (err) => {
-    if (err) console.error('Failed to subscribe to announcements', err);
+// Subscribe to channels for Real-Time Admin Updates and Global Announcements
+redisSub.subscribe('global_announcements', 'admin_channel', (err) => {
+    if (err) {
+        console.error('[SERVER] Failed to subscribe to channels:', err);
+    } else {
+        console.log('[SERVER] Redis Subscribed to: global_announcements, admin_channel');
+    }
 });
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -322,6 +327,7 @@ const broadcastState = async (io: Server, sessionId: string) => {
 };
 
 app.prepare().then(() => {
+  // Wrap handle in try-catch to suppress client abort errors log
   const httpServer = createServer(async (req, res) => {
     try {
         const parsedUrl = parse(req.url!, true);
@@ -341,16 +347,22 @@ app.prepare().then(() => {
     cors: { origin: '*' }
   });
 
-  // --- PUB/SUB LISTENER ---
+  // --- PUB/SUB DISPATCHER ---
   redisSub.on('message', (channel, message) => {
-    if (channel === 'global_announcements') {
-        try {
-            const data = JSON.parse(message);
-            // Broadcast to everyone connected
+    try {
+        console.log(`[SERVER] Redis Message on ${channel}:`, message.substring(0, 50) + '...');
+        const data = JSON.parse(message);
+        
+        if (channel === 'global_announcements') {
             io.emit('global-announcement', data);
-        } catch (e) {
-            console.error("Announcement Broadcast Error", e);
+        } 
+        else if (channel === 'admin_channel') {
+            // Broadcast to the secure admin room for instant dashboard updates
+            console.log('[SERVER] Broadcasting admin-update to room "admin-room"');
+            io.to('admin-room').emit('admin-update', data);
         }
+    } catch (e) {
+        console.error("Redis Pub/Sub Error", e);
     }
   });
 
@@ -361,6 +373,22 @@ app.prepare().then(() => {
 
     socket.on('disconnect', () => {
         redis.decr('system:active_connections');
+    });
+
+    // --- SECURE ADMIN JOIN ---
+    socket.on('join-admin-room', async () => {
+        console.log(`[SERVER] Socket ${socket.id} attempting to join admin-room`);
+        const userId = await getUserIdFromSocket(socket);
+        
+        console.log(`[SERVER] Socket UserID: ${userId} | Required: ${process.env.SUPER_ADMIN_ID}`);
+
+        // Strict check against SUPER_ADMIN_ID env variable
+        if (userId && userId === process.env.SUPER_ADMIN_ID) {
+            socket.join('admin-room');
+            console.log(`[SERVER] Socket ${socket.id} joined admin-room successfully`);
+        } else {
+            console.warn(`[SERVER] Unauthorized admin join attempt from ${socket.id}`);
+        }
     });
 
     // --- JOIN LOGIC ---
@@ -657,11 +685,10 @@ app.prepare().then(() => {
             const ops = [];
             // Handle Previous: Archive & Auto-Add
             if (prevId) {
-                ops.push(prisma.queueItem.update({ where: { id: prevId }, data: { status: 'PLAYED' } }));
-                
-                // TRIGGER AUTO-ADD & KARMA
+                // --- NEW: INCREMENT PLAY COUNT ---
                 const prevItem = await prisma.queueItem.findUnique({ where: { id: prevId } });
                 if (prevItem) {
+                    await prisma.song.update({ where: { id: prevItem.songId }, data: { playCount: { increment: 1 } } });
                     handleAutoAdd(sessionId, prevItem.songId);
                     // GAMIFICATION: Award Karma
                     if (prevItem.suggestedByGuestId) {
@@ -671,6 +698,7 @@ app.prepare().then(() => {
                         });
                     }
                 }
+                ops.push(prisma.queueItem.update({ where: { id: prevId }, data: { status: 'PLAYED' } }));
             }
             
             let newPlayingId = nextId;
@@ -718,6 +746,7 @@ app.prepare().then(() => {
             // Archive old songs
             for (const item of currentlyPlaying) {
                 handleAutoAdd(sessionId, item.songId);
+                await prisma.song.update({ where: { id: item.songId }, data: { playCount: { increment: 1 } } });
             }
             await prisma.queueItem.updateMany({ where: { voteSessionId: sessionId, status: 'PLAYING' }, data: { status: 'PLAYED' } });
             
@@ -749,6 +778,7 @@ app.prepare().then(() => {
             
             const item = await prisma.queueItem.findUnique({ where: { id: queueItemId } });
             if (item) {
+                await prisma.song.update({ where: { id: item.songId }, data: { playCount: { increment: 1 } } });
                 await handleAutoAdd(sessionId, item.songId);
                 if (item.suggestedByGuestId) await prisma.guestAccount.update({ where: { id: item.suggestedByGuestId }, data: { karma: { increment: 10 } }});
             }
@@ -794,6 +824,13 @@ app.prepare().then(() => {
                 update: {},
                 create: { id: songData.id, title: songData.title, artist: songData.artist, album: 'Force Played', albumArtUrl: songData.albumArtUrl, durationMs: 0 }
             });
+            
+            // Increment count for current song before force play wipes it
+            const currentlyPlaying = await prisma.queueItem.findMany({ where: { voteSessionId: sessionId, status: 'PLAYING' } });
+            for(const item of currentlyPlaying) {
+                 await prisma.song.update({ where: { id: item.songId }, data: { playCount: { increment: 1 } } });
+            }
+
             await prisma.queueItem.updateMany({ where: { voteSessionId: sessionId, status: 'PLAYING' }, data: { status: 'PLAYED' } });
             
             const existing = await prisma.queueItem.findFirst({ where: { voteSessionId: sessionId, status: 'LIVE', songId: songData.id } });

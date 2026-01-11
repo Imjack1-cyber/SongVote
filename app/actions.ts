@@ -14,68 +14,91 @@ import { searchYouTube } from '@/lib/youtube';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
-// --- ADVANCED ANALYTICS ---
+// --- SYSTEM FEEDBACK ---
+
+export async function submitFeedback(formData: FormData) {
+    const content = formData.get('content') as string;
+    const type = formData.get('type') as 'BUG' | 'SUGGESTION' | 'OTHER';
+    
+    const hostUser = await getCurrentUser();
+    const guestId = cookies().get('guest_id')?.value;
+    const userId = hostUser?.userId || guestId || null;
+
+    if (!content || !type) throw new Error("Missing fields");
+
+    // Create DB Entry
+    const feedback = await prisma.systemFeedback.create({
+        data: {
+            content,
+            type,
+            userId
+        }
+    });
+
+    // Notify Admins Real-Time via Redis to Server.ts
+    console.log('[ACTION] Publishing feedback to admin_channel via Redis');
+    await redis.publish('admin_channel', JSON.stringify({ 
+        type: 'NEW_FEEDBACK', 
+        data: feedback 
+    }));
+}
+
+export async function getSystemFeedback() {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    return await prisma.systemFeedback.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 100 // Cap for performance
+    });
+}
+
+export async function updateFeedbackStatus(id: string, status: 'OPEN' | 'RESOLVED' | 'ARCHIVED') {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    await prisma.systemFeedback.update({
+        where: { id },
+        data: { status }
+    });
+    revalidatePath('/admin/feedback');
+}
+
+export async function deleteFeedback(id: string) {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    await prisma.systemFeedback.delete({ where: { id } });
+    revalidatePath('/admin/feedback');
+}
+
+// ... (Rest of existing actions below) ...
+
 export async function getDetailedAnalytics() {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
-
     const [topSongs, hourlyStatsRaw] = await Promise.all([
-        // 1. Global Top Songs
-        prisma.song.findMany({
-            orderBy: { playCount: 'desc' },
-            take: 10,
-            select: { id: true, title: true, artist: true, albumArtUrl: true, playCount: true }
-        }),
-        // 2. Hourly Usage (Last 30 Days) - Approximated via fetching timestamps
-        // NOTE: For massive scale, use raw SQL date_trunc. For MVP, fetch recent dates.
-        prisma.queueItem.findMany({
-            where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
-            select: { createdAt: true }
-        })
+        prisma.song.findMany({ orderBy: { playCount: 'desc' }, take: 10, select: { id: true, title: true, artist: true, albumArtUrl: true, playCount: true } }),
+        prisma.queueItem.findMany({ where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }, select: { createdAt: true } })
     ]);
-
-    // Process Hourly Stats in JS (Safe for < 50k rows)
     const hours = new Array(24).fill(0);
-    hourlyStatsRaw.forEach(item => {
-        const hour = item.createdAt.getHours(); // 0-23 Local Time of server
-        hours[hour]++;
-    });
-
-    const hourlyChart = hours.map((count, hour) => ({
-        hour: `${hour}:00`,
-        count
-    }));
-
-    return {
-        topSongs,
-        hourlyChart
-    };
+    hourlyStatsRaw.forEach(item => { const hour = item.createdAt.getHours(); hours[hour]++; });
+    const hourlyChart = hours.map((count, hour) => ({ hour: `${hour}:00`, count }));
+    return { topSongs, hourlyChart };
 }
 
-// --- METRICS HELPER ---
 export async function getSystemHealth() {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
-
     const start = Date.now();
-    try {
-        await prisma.$queryRaw`SELECT 1`;
-    } catch(e) {}
+    try { await prisma.$queryRaw`SELECT 1`; } catch(e) {}
     const dbLatency = Date.now() - start;
-
     const info = await redis.info('memory');
     const memoryMatch = info.match(/used_memory_human:(.*)/);
     const memory = memoryMatch ? memoryMatch[1].trim() : 'Unknown';
-
     const connectionsStr = await redis.get('system:active_connections');
     const connections = parseInt(connectionsStr || '0');
-
-    return {
-        memory,
-        connections: connections < 0 ? 0 : connections, 
-        dbLatency,
-        timestamp: Date.now()
-    };
+    return { memory, connections: connections < 0 ? 0 : connections, dbLatency, timestamp: Date.now() };
 }
 
 export async function completeTutorial() {
