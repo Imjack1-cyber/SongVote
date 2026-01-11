@@ -1,7 +1,8 @@
 import { getAdminDashboardData } from '@/app/actions';
 import AdminDashboard from '@/components/admin/AdminDashboard';
 import AnnouncementControl from '@/components/admin/AnnouncementControl';
-import SystemHealthMonitor from '@/components/admin/SystemHealthMonitor'; 
+import SystemHealthMonitor from '@/components/admin/SystemHealthMonitor';
+import AnalyticsDashboard from '@/components/admin/AnalyticsDashboard'; 
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 
@@ -17,13 +18,18 @@ export default async function AdminPage() {
   const data = await getAdminDashboardData();
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-12 pb-20">
         
+        {/* Row 1: Realtime Stats & Controls */}
         <div className="grid lg:grid-cols-2 gap-8">
             <AnnouncementControl />
-            <SystemHealthMonitor /> 
+            <SystemHealthMonitor />
         </div>
         
+        {/* Row 2: Deep Analytics */}
+        <AnalyticsDashboard />
+
+        {/* Row 3: Admin Overview */}
         <AdminDashboard 
             kpis={data.kpis} 
             hosts={data.hosts} 

@@ -15,11 +15,10 @@ model Host {
   
   isBanned     Boolean  @default(false)
   deletedAt    DateTime?
-  banReason    String?  
+  banReason    String?
 
   youtubeApiKey     String?  
   tutorialCompleted Boolean  @default(false)
-  
   avatarUrl         String?  
 
   settings     GlobalSettings?
@@ -103,6 +102,9 @@ model Song {
   album       String? 
   albumArtUrl String? 
   durationMs  Int
+  
+  playCount   Int      @default(0)
+  
   cachedAt    DateTime @default(now())
   queueItems  QueueItem[]
   collectionItems CollectionItem[]
@@ -121,6 +123,8 @@ model QueueItem {
   isRadio       Boolean     @default(false)
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+
+  @@index([status, updatedAt])
 }
 
 model SongCollection {

@@ -14,6 +14,44 @@ import { searchYouTube } from '@/lib/youtube';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
+// --- ADVANCED ANALYTICS ---
+export async function getDetailedAnalytics() {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    const [topSongs, hourlyStatsRaw] = await Promise.all([
+        // 1. Global Top Songs
+        prisma.song.findMany({
+            orderBy: { playCount: 'desc' },
+            take: 10,
+            select: { id: true, title: true, artist: true, albumArtUrl: true, playCount: true }
+        }),
+        // 2. Hourly Usage (Last 30 Days) - Approximated via fetching timestamps
+        // NOTE: For massive scale, use raw SQL date_trunc. For MVP, fetch recent dates.
+        prisma.queueItem.findMany({
+            where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+            select: { createdAt: true }
+        })
+    ]);
+
+    // Process Hourly Stats in JS (Safe for < 50k rows)
+    const hours = new Array(24).fill(0);
+    hourlyStatsRaw.forEach(item => {
+        const hour = item.createdAt.getHours(); // 0-23 Local Time of server
+        hours[hour]++;
+    });
+
+    const hourlyChart = hours.map((count, hour) => ({
+        hour: `${hour}:00`,
+        count
+    }));
+
+    return {
+        topSongs,
+        hourlyChart
+    };
+}
+
 // --- METRICS HELPER ---
 export async function getSystemHealth() {
     const user = await getCurrentUser();
@@ -22,26 +60,23 @@ export async function getSystemHealth() {
     const start = Date.now();
     try {
         await prisma.$queryRaw`SELECT 1`;
-    } catch (e) { }
+    } catch(e) {}
     const dbLatency = Date.now() - start;
 
-    // Get Redis Info
     const info = await redis.info('memory');
     const memoryMatch = info.match(/used_memory_human:(.*)/);
     const memory = memoryMatch ? memoryMatch[1].trim() : 'Unknown';
 
-    // Get Connection Count
     const connectionsStr = await redis.get('system:active_connections');
     const connections = parseInt(connectionsStr || '0');
 
     return {
         memory,
-        connections: connections < 0 ? 0 : connections, // Safety check
+        connections: connections < 0 ? 0 : connections, 
         dbLatency,
         timestamp: Date.now()
     };
 }
-
 
 export async function completeTutorial() {
     const user = await getCurrentUser();
@@ -93,7 +128,7 @@ export async function updateHostProfile(formData: FormData) {
 export async function createDemoSession() {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const username = `demo_host_${randomSuffix}`;
-    const password = `demo_${randomSuffix}`;
+    const password = `demo_${randomSuffix}`; 
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await prisma.host.create({
         data: {
@@ -107,40 +142,40 @@ export async function createDemoSession() {
     const voteId = generateVoteId();
     await prisma.voteSession.create({ data: { id: voteId, hostId: user.id, title: "Demo Party", isActive: true, votesPerUser: 10, requireVerification: false } });
     const guestsData = [];
-    for (let i = 0; i < 3; i++) {
-        guestsData.push({ voteSessionId: voteId, username: `Guest_${i + 1}`, password: Math.floor(1000 + Math.random() * 9000).toString() });
+    for(let i=0; i<3; i++) {
+        guestsData.push({ voteSessionId: voteId, username: `Guest_${i+1}`, password: Math.floor(1000 + Math.random() * 9000).toString() });
     }
     await prisma.guestAccount.createMany({ data: guestsData });
     redirect(`/${user.username}/${voteId}`);
 }
 
 export async function updateGlobalSettings(formData: FormData) {
-    const user = await getCurrentUser();
-    if (!user) throw new Error('Unauthorized');
-    const bgColor = formData.get('bgColor') as string;
-    const fgColor = formData.get('fgColor') as string;
-    const accentColor = formData.get('accentColor') as string;
-    const darkBgColor = formData.get('darkBgColor') as string;
-    const darkFgColor = formData.get('darkFgColor') as string;
-    const darkAccentColor = formData.get('darkAccentColor') as string;
-    const darkMode = formData.get('darkMode') === 'on';
-    await prisma.globalSettings.upsert({
-        where: { hostId: user.userId },
-        update: { bgColor, fgColor, accentColor, darkBgColor, darkFgColor, darkAccentColor, darkMode },
-        create: { hostId: user.userId, bgColor, fgColor, accentColor, darkBgColor, darkFgColor, darkAccentColor, darkMode }
-    });
-    revalidatePath(`/${user.username}`);
-    revalidatePath(`/${user.username}/settings`);
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Unauthorized');
+  const bgColor = formData.get('bgColor') as string;
+  const fgColor = formData.get('fgColor') as string;
+  const accentColor = formData.get('accentColor') as string;
+  const darkBgColor = formData.get('darkBgColor') as string;
+  const darkFgColor = formData.get('darkFgColor') as string;
+  const darkAccentColor = formData.get('darkAccentColor') as string;
+  const darkMode = formData.get('darkMode') === 'on';
+  await prisma.globalSettings.upsert({
+    where: { hostId: user.userId },
+    update: { bgColor, fgColor, accentColor, darkBgColor, darkFgColor, darkAccentColor, darkMode },
+    create: { hostId: user.userId, bgColor, fgColor, accentColor, darkBgColor, darkFgColor, darkAccentColor, darkMode }
+  });
+  revalidatePath(`/${user.username}`);
+  revalidatePath(`/${user.username}/settings`);
 }
 
 export async function toggleDarkMode(currentHostname: string) {
-    const user = await getCurrentUser();
-    if (!user) return;
-    const settings = await prisma.globalSettings.findUnique({ where: { hostId: user.userId } });
-    if (settings) {
-        await prisma.globalSettings.update({ where: { hostId: user.userId }, data: { darkMode: !settings.darkMode } });
-        revalidatePath(`/${currentHostname}`);
-    }
+  const user = await getCurrentUser();
+  if (!user) return;
+  const settings = await prisma.globalSettings.findUnique({ where: { hostId: user.userId } });
+  if (settings) {
+    await prisma.globalSettings.update({ where: { hostId: user.userId }, data: { darkMode: !settings.darkMode } });
+    revalidatePath(`/${currentHostname}`);
+  }
 }
 
 export async function saveYoutubeCredentials(formData: FormData) {
@@ -170,16 +205,16 @@ export async function bulkImportSongs(formData: FormData) {
     const sessionId = formData.get('sessionId') as string;
     if (!collectionId || !rawText) return;
     const lines = rawText.split(/\r?\n/).filter(line => line.trim().length > 0);
-    const limit = 50;
+    const limit = 50; 
     const tracksToProcess = lines.slice(0, limit);
     for (const line of tracksToProcess) {
         try {
             const query = line.trim();
             const results = await searchYouTube(query, user.userId, false);
             if (results.length > 0) {
-                const track = results[0];
+                const track = results[0]; 
                 await prisma.song.upsert({ where: { id: track.id }, update: {}, create: { id: track.id, title: track.title, artist: track.artist, album: 'Imported', albumArtUrl: track.albumArtUrl, durationMs: track.durationMs || 0 } });
-                await prisma.collectionItem.create({ data: { collectionId, songId: track.id } }).catch(() => { });
+                await prisma.collectionItem.create({ data: { collectionId, songId: track.id } }).catch(() => {}); 
             }
         } catch (e) { console.error(`Failed to import: ${line}`, e); }
     }
@@ -211,50 +246,50 @@ export async function deleteSession(formData: FormData) {
 }
 
 export async function updateSessionRules(formData: FormData) {
-    const user = await getCurrentUser();
-    if (!user) throw new Error('Unauthorized');
-    const sessionId = formData.get('sessionId') as string;
-    const requireVerification = formData.get('requireVerification') === 'on';
-    const votesPerUser = parseInt(formData.get('votesPerUser') as string) || 5;
-    const cycleDelay = parseInt(formData.get('cycleDelay') as string) || 0;
-    const startTimeStr = formData.get('startTime') as string;
-    const endTimeStr = formData.get('endTime') as string;
-    const backupPlaylistId = formData.get('backupPlaylistId') as string;
-    const backupCollectionId = formData.get('backupCollectionId') as string;
-    const autoAddToCollectionId = formData.get('autoAddToCollectionId') as string;
-    const enableReactions = formData.get('enableReactions') === 'on';
-    const enableDuplicateCheck = formData.get('enableDuplicateCheck') === 'on';
-    const enableRegionCheck = formData.get('enableRegionCheck') === 'on';
-    let cleanedPlaylistId = null;
-    if (backupPlaylistId) {
-        const match = backupPlaylistId.match(/[?&]list=([^#\&\?]+)/);
-        cleanedPlaylistId = match ? match[1] : backupPlaylistId;
-    }
-    const startTime = startTimeStr ? new Date(startTimeStr) : null;
-    const endTime = endTimeStr ? new Date(endTimeStr) : null;
-    await prisma.voteSession.update({
-        where: { id: sessionId, hostId: user.userId },
-        data: { requireVerification, votesPerUser, cycleDelay, startTime, endTime, backupPlaylistId: cleanedPlaylistId, backupCollectionId: backupCollectionId || null, autoAddToCollectionId: autoAddToCollectionId || null, enableReactions, enableDuplicateCheck, enableRegionCheck }
-    });
-    if (cleanedPlaylistId) { await redis.del(`radio_playlist:${cleanedPlaylistId}`); }
-    revalidatePath(`/${user.username}/${sessionId}/settings`);
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Unauthorized');
+  const sessionId = formData.get('sessionId') as string;
+  const requireVerification = formData.get('requireVerification') === 'on';
+  const votesPerUser = parseInt(formData.get('votesPerUser') as string) || 5;
+  const cycleDelay = parseInt(formData.get('cycleDelay') as string) || 0;
+  const startTimeStr = formData.get('startTime') as string;
+  const endTimeStr = formData.get('endTime') as string;
+  const backupPlaylistId = formData.get('backupPlaylistId') as string;
+  const backupCollectionId = formData.get('backupCollectionId') as string;
+  const autoAddToCollectionId = formData.get('autoAddToCollectionId') as string;
+  const enableReactions = formData.get('enableReactions') === 'on';
+  const enableDuplicateCheck = formData.get('enableDuplicateCheck') === 'on';
+  const enableRegionCheck = formData.get('enableRegionCheck') === 'on';
+  let cleanedPlaylistId = null;
+  if (backupPlaylistId) {
+      const match = backupPlaylistId.match(/[?&]list=([^#\&\?]+)/);
+      cleanedPlaylistId = match ? match[1] : backupPlaylistId;
+  }
+  const startTime = startTimeStr ? new Date(startTimeStr) : null;
+  const endTime = endTimeStr ? new Date(endTimeStr) : null;
+  await prisma.voteSession.update({
+    where: { id: sessionId, hostId: user.userId },
+    data: { requireVerification, votesPerUser, cycleDelay, startTime, endTime, backupPlaylistId: cleanedPlaylistId, backupCollectionId: backupCollectionId || null, autoAddToCollectionId: autoAddToCollectionId || null, enableReactions, enableDuplicateCheck, enableRegionCheck }
+  });
+  if (cleanedPlaylistId) { await redis.del(`radio_playlist:${cleanedPlaylistId}`); }
+  revalidatePath(`/${user.username}/${sessionId}/settings`);
 }
 
 export async function generateGuests(formData: FormData) {
-    const user = await getCurrentUser();
-    if (!user) throw new Error('Unauthorized');
-    const sessionId = formData.get('sessionId') as string;
-    const count = parseInt(formData.get('count') as string);
-    const nouns = ['Fox', 'Bear', 'Wolf', 'Owl', 'Cat', 'Dog', 'Lion'];
-    const adjs = ['Red', 'Blue', 'Fast', 'Cool', 'Neon', 'Hot', 'Ice'];
-    const guestsData = [];
-    for (let i = 0; i < count; i++) {
-        const randomName = `${adjs[Math.floor(Math.random() * adjs.length)]}${nouns[Math.floor(Math.random() * nouns.length)]}${Math.floor(Math.random() * 99)}`;
-        const randomPass = Math.floor(1000 + Math.random() * 9000).toString();
-        guestsData.push({ voteSessionId: sessionId, username: randomName, password: randomPass });
-    }
-    await prisma.guestAccount.createMany({ data: guestsData });
-    revalidatePath(`/${user.username}/${sessionId}/settings`);
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Unauthorized');
+  const sessionId = formData.get('sessionId') as string;
+  const count = parseInt(formData.get('count') as string);
+  const nouns = ['Fox', 'Bear', 'Wolf', 'Owl', 'Cat', 'Dog', 'Lion'];
+  const adjs = ['Red', 'Blue', 'Fast', 'Cool', 'Neon', 'Hot', 'Ice'];
+  const guestsData = [];
+  for(let i=0; i<count; i++) {
+     const randomName = `${adjs[Math.floor(Math.random()*adjs.length)]}${nouns[Math.floor(Math.random()*nouns.length)]}${Math.floor(Math.random()*99)}`;
+     const randomPass = Math.floor(1000 + Math.random() * 9000).toString();
+     guestsData.push({ voteSessionId: sessionId, username: randomName, password: randomPass });
+  }
+  await prisma.guestAccount.createMany({ data: guestsData });
+  revalidatePath(`/${user.username}/${sessionId}/settings`);
 }
 
 export async function banGuest(formData: FormData) {
@@ -269,16 +304,16 @@ export async function banGuest(formData: FormData) {
 }
 
 export async function loginGuest(formData: FormData) {
-    const username = formData.get('username') as string;
-    const password = formData.get('password') as string;
-    const guest = await prisma.guestAccount.findFirst({
-        where: { username: { equals: username, mode: 'insensitive' }, password: password },
-        include: { voteSession: { include: { host: true } } }
-    });
-    if (!guest) redirect('/join?error=Invalid credentials');
-    if (guest.isBanned) redirect('/join?error=Access denied');
-    cookies().set('guest_id', guest.id, { httpOnly: false, path: '/', maxAge: 60 * 60 * 24 });
-    redirect(`/${guest.voteSession.host.username}/${guest.voteSession.id}`);
+  const username = formData.get('username') as string;
+  const password = formData.get('password') as string;
+  const guest = await prisma.guestAccount.findFirst({
+    where: { username: { equals: username, mode: 'insensitive' }, password: password },
+    include: { voteSession: { include: { host: true } } }
+  });
+  if (!guest) redirect('/join?error=Invalid credentials');
+  if (guest.isBanned) redirect('/join?error=Access denied');
+  cookies().set('guest_id', guest.id, { httpOnly: false, path: '/', maxAge: 60 * 60 * 24 });
+  redirect(`/${guest.voteSession.host.username}/${guest.voteSession.id}`);
 }
 
 export async function addToBlacklist(type: 'SONG_ID' | 'KEYWORD', value: string) {
@@ -382,10 +417,10 @@ export async function getAdminDashboardData() {
         prisma.voteSession.count(),
         prisma.voteSession.count({ where: { isActive: true } }),
         prisma.queueItem.aggregate({ _sum: { voteCount: true } }),
-        prisma.host.findMany({
-            take: 20,
-            orderBy: { createdAt: 'desc' },
-            include: { _count: { select: { votes: true } } }
+        prisma.host.findMany({ 
+            take: 20, 
+            orderBy: { createdAt: 'desc' }, 
+            include: { _count: { select: { votes: true } } } 
         }),
         prisma.queueItem.findMany({ where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }, select: { createdAt: true } })
     ]);
@@ -398,18 +433,18 @@ export async function getAdminDashboardData() {
 
     const chartArray = Array.from(chartDataMap.entries())
         .map(([date, count]) => ({ date, count }))
-        .sort((a, b) => a.date.localeCompare(b.date));
+        .sort((a,b) => a.date.localeCompare(b.date));
 
     return {
         kpis: { totalHosts: hostCount, totalSessions: sessionCount, activeSessions: activeSessionCount, totalVotes: totalVotesAgg._sum.voteCount || 0 },
-        hosts: hosts.map(h => ({
-            id: h.id,
-            username: h.username,
-            createdAt: h.createdAt,
+        hosts: hosts.map(h => ({ 
+            id: h.id, 
+            username: h.username, 
+            createdAt: h.createdAt, 
             sessionCount: h._count.votes,
-            isBanned: h.isBanned,
+            isBanned: h.isBanned,      
             deletedAt: h.deletedAt,
-            banReason: h.banReason
+            banReason: h.banReason 
         })),
         chart: chartArray
     };
@@ -456,7 +491,7 @@ export async function clearGlobalAnnouncement() {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
     await redis.del(ANNOUNCEMENT_KEY);
-    await redis.publish('global_announcements', JSON.stringify({ message: null }));
+    await redis.publish('global_announcements', JSON.stringify({ message: null })); 
     revalidatePath('/');
 }
 
