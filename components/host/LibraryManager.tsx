@@ -47,6 +47,7 @@ export default function LibraryManager({ collections, sessionId }: LibraryManage
                         Create
                     </button>
                     <button 
+                        id="import-btn-toggle"
                         onClick={() => setMode('import')}
                         className={`px-3 py-1 text-xs font-medium rounded-md transition ${mode === 'import' ? 'bg-[var(--surface)] shadow-sm text-[var(--accent)]' : 'opacity-60'}`}
                     >
@@ -59,18 +60,19 @@ export default function LibraryManager({ collections, sessionId }: LibraryManage
                 <form action={createCollection} className="flex gap-2">
                     <input type="hidden" name="sessionId" value={sessionId} />
                     <input 
+                        id="playlist-create-input"
                         name="title" 
                         type="text" 
                         placeholder="New Collection Name..." 
                         required
                         className="flex-1 p-2 rounded border border-[var(--border)] bg-[var(--background)] text-sm"
                     />
-                    <button type="submit" className="btn-primary text-xs px-3 flex items-center gap-2">
+                    <button id="playlist-create-btn" type="submit" className="btn-primary text-xs px-3 flex items-center gap-2">
                         <Plus className="w-4 h-4" /> Create
                     </button>
                 </form>
             ) : (
-                <form action={handleImport} className="space-y-3 bg-[var(--foreground)]/5 p-4 rounded-xl border border-[var(--border)]">
+                <form id="import-section" action={handleImport} className="space-y-3 bg-[var(--foreground)]/5 p-4 rounded-xl border border-[var(--border)]">
                     <h3 className="text-sm font-bold flex items-center gap-2">
                         <Upload className="w-4 h-4" /> Bulk Import from Text / Spotify
                     </h3>

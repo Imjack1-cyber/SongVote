@@ -4,11 +4,13 @@
     "MaxFileSizeKB":  400,
     "ExcludedDirectories":  [
                                 "C:\\dev\\eclipse\\workspace\\SongVote\\node_modules",
-                                "C:\\dev\\eclipse\\workspace\\SongVote\\.next"
+                                "C:\\dev\\eclipse\\workspace\\SongVote\\.next",
+                                "C:\\dev\\eclipse\\workspace\\SongVote\\public"
                             ],
     "ExcludedFiles":  [
                           "C:\\dev\\eclipse\\workspace\\SongVote\\combine_code_gui.ps1",
-                          "C:\\dev\\eclipse\\workspace\\SongVote\\package-lock.json"
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\package-lock.json",
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\songvote.txt"
                       ],
     "ExtensionFilterList":  [
 

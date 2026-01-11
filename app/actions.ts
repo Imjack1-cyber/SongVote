@@ -11,6 +11,97 @@ import { cookies } from 'next/headers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
 import { searchYouTube } from '@/lib/youtube';
+import { writeFile, mkdir } from 'fs/promises';
+import { join } from 'path';
+
+// --- TUTORIAL ACTIONS ---
+
+export async function completeTutorial() {
+    const user = await getCurrentUser();
+    if (!user) return;
+
+    await prisma.host.update({
+        where: { id: user.userId },
+        data: { tutorialCompleted: true }
+    });
+
+    revalidatePath(`/${user.username}`);
+}
+
+export async function resetTutorial() {
+    const user = await getCurrentUser();
+    if (!user) return;
+
+    await prisma.host.update({
+        where: { id: user.userId },
+        data: { tutorialCompleted: false }
+    });
+
+    revalidatePath(`/${user.username}`);
+}
+
+// --- PROFILE ACTIONS ---
+
+export async function uploadHostAvatar(formData: FormData) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error('Unauthorized');
+
+    const file = formData.get('avatarFile') as File;
+    const fallbackUrl = formData.get('avatarUrl') as string;
+
+    // 1. Handle File Upload
+    if (file && file.size > 0) {
+        // Validation
+        if (!file.type.startsWith('image/')) throw new Error('File must be an image');
+        if (file.size > 5 * 1024 * 1024) throw new Error('File too large (Max 5MB)');
+
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+
+        // Generate safe filename (userid-timestamp.ext)
+        const ext = file.name.split('.').pop()?.substring(0, 4) || 'png';
+        const filename = `${user.userId}-${Date.now()}.${ext}`;
+        
+        // Ensure public/uploads directory exists
+        const uploadDir = join(process.cwd(), 'public', 'uploads');
+        await mkdir(uploadDir, { recursive: true });
+
+        // Write file
+        await writeFile(join(uploadDir, filename), buffer);
+        
+        // Save relative path for browser access
+        const publicPath = `/uploads/${filename}`;
+
+        await prisma.host.update({
+            where: { id: user.userId },
+            data: { avatarUrl: publicPath }
+        });
+    } 
+    // 2. Handle URL Fallback (if no file selected but URL entered)
+    else if (fallbackUrl) {
+        await prisma.host.update({
+            where: { id: user.userId },
+            data: { avatarUrl: fallbackUrl }
+        });
+    }
+
+    revalidatePath(`/${user.username}/profile`);
+    revalidatePath(`/${user.username}`);
+}
+
+export async function updateHostProfile(formData: FormData) {
+    // Legacy action kept for backward compatibility if needed, 
+    // though uploadHostAvatar supersedes it.
+    const user = await getCurrentUser();
+    if (!user) throw new Error('Unauthorized');
+    const avatarUrl = formData.get('avatarUrl') as string;
+    await prisma.host.update({
+        where: { id: user.userId },
+        data: { avatarUrl }
+    });
+    revalidatePath(`/${user.username}/profile`);
+    revalidatePath(`/${user.username}`);
+}
 
 // --- DEMO MODE ---
 
@@ -21,7 +112,6 @@ export async function createDemoSession() {
     
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 1. Create Demo User
     const user = await prisma.host.create({
         data: {
             username,
@@ -33,14 +123,13 @@ export async function createDemoSession() {
                     accentColor: "#6366f1",
                     darkMode: false
                 }
-            }
+            },
+            tutorialCompleted: true
         }
     });
 
-    // 2. Login
     await loginUser(user.id, user.username);
 
-    // 3. Create Session
     const voteId = generateVoteId();
     await prisma.voteSession.create({
         data: {
@@ -53,7 +142,7 @@ export async function createDemoSession() {
         }
     });
 
-    // 4. Generate some guests
+    // Generate some guests
     const guestsData = [];
     for(let i=0; i<3; i++) {
         guestsData.push({
@@ -155,7 +244,6 @@ export async function bulkImportSongs(formData: FormData) {
             
             if (results.length > 0) {
                 const track = results[0]; 
-
                 await prisma.song.upsert({
                     where: { id: track.id },
                     update: {},
@@ -168,12 +256,8 @@ export async function bulkImportSongs(formData: FormData) {
                         durationMs: track.durationMs || 0
                     }
                 });
-
                 await prisma.collectionItem.create({
-                    data: {
-                        collectionId,
-                        songId: track.id
-                    }
+                    data: { collectionId, songId: track.id }
                 }).catch(() => {}); 
             }
         } catch (e) {
@@ -225,10 +309,12 @@ export async function updateSessionRules(formData: FormData) {
   const startTimeStr = formData.get('startTime') as string;
   const endTimeStr = formData.get('endTime') as string;
   
+  // Radio Settings
   const backupPlaylistId = formData.get('backupPlaylistId') as string;
   const backupCollectionId = formData.get('backupCollectionId') as string;
   const autoAddToCollectionId = formData.get('autoAddToCollectionId') as string;
 
+  // Toggles
   const enableReactions = formData.get('enableReactions') === 'on';
   const enableDuplicateCheck = formData.get('enableDuplicateCheck') === 'on';
   const enableRegionCheck = formData.get('enableRegionCheck') === 'on';
@@ -309,7 +395,7 @@ export async function loginGuest(formData: FormData) {
   redirect(`/${guest.voteSession.host.username}/${guest.voteSession.id}`);
 }
 
-// --- BLACKLIST ---
+// --- BLACKLIST & HISTORY ---
 
 export async function addToBlacklist(type: 'SONG_ID' | 'KEYWORD', value: string) {
     const user = await getCurrentUser();
@@ -331,8 +417,6 @@ export async function getBlacklist() {
     return await prisma.blacklist.findMany({ where: { hostId: user.userId }, orderBy: { createdAt: 'desc' } });
 }
 
-// --- HISTORY & ANALYTICS ---
-
 export async function getSessionHistory(sessionId: string) {
     const user = await getCurrentUser();
     if (!user) throw new Error('Unauthorized');
@@ -346,8 +430,6 @@ export async function getSessionAnalytics(sessionId: string) {
     const topSongs = await prisma.queueItem.findMany({ where: { voteSessionId: sessionId }, orderBy: { voteCount: 'desc' }, take: 5, include: { song: true } });
     return { totalVotes: totalVotes._sum.voteCount || 0, topSongs };
 }
-
-// --- PERMISSIONS & STATS ---
 
 export async function getSessionStats(sessionId: string) {
     const user = await getCurrentUser();
@@ -368,15 +450,7 @@ export async function getSessionStats(sessionId: string) {
         const dbGuest = guests.find(g => g.id === u.id);
         const karma = dbGuest ? dbGuest.karma : 0;
 
-        stats.push({ 
-            id: u.id, 
-            name: u.name, 
-            votesUsed, 
-            timeLeft: ttl > 0 ? ttl : 0, 
-            permissions: u.permissions, 
-            isHost: u.isHost,
-            karma 
-        });
+        stats.push({ id: u.id, name: u.name, votesUsed, timeLeft: ttl > 0 ? ttl : 0, permissions: u.permissions, isHost: u.isHost, karma });
     }
     return stats;
 }
@@ -418,4 +492,68 @@ export async function updateSessionDefaultPermissions(sessionId: string, permiss
     if (!user) throw new Error('Unauthorized');
     await prisma.voteSession.update({ where: { id: sessionId, hostId: user.userId }, data: { defaultPermissions: permissions as any } });
     revalidatePath(`/${user.username}/${sessionId}/settings`);
+}
+
+// --- SUPER ADMIN DASHBOARD ---
+
+export async function getAdminDashboardData() {
+    const user = await getCurrentUser();
+    
+    // STRICT AUTH CHECK using Env Variable
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) {
+        // We throw an error here which will be caught by the UI or Next.js Error Boundary
+        throw new Error("Unauthorized Access: Super Admin Only");
+    }
+
+    // Parallelize queries for performance
+    const [hostCount, sessionCount, activeSessionCount, totalVotesAgg, hosts, recentItems] = await Promise.all([
+        prisma.host.count(),
+        prisma.voteSession.count(),
+        prisma.voteSession.count({ where: { isActive: true } }),
+        prisma.queueItem.aggregate({ _sum: { voteCount: true } }),
+        prisma.host.findMany({
+            take: 20,
+            orderBy: { createdAt: 'desc' },
+            include: { 
+                _count: { 
+                    select: { votes: true } 
+                } 
+            }
+        }),
+        // Fetch queue items from last 30 days for the chart
+        prisma.queueItem.findMany({
+            where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+            select: { createdAt: true }
+        })
+    ]);
+
+    // Aggregate Data for Chart (Group by Date)
+    const chartDataMap = new Map<string, number>();
+    
+    recentItems.forEach(item => {
+        const dateKey = item.createdAt.toISOString().split('T')[0]; // YYYY-MM-DD
+        chartDataMap.set(dateKey, (chartDataMap.get(dateKey) || 0) + 1);
+    });
+
+    // Fill in missing days (optional but good for charts)
+    // For simplicity, we just return the existing data points sorted
+    const chartArray = Array.from(chartDataMap.entries())
+        .map(([date, count]) => ({ date, count }))
+        .sort((a,b) => a.date.localeCompare(b.date));
+
+    return {
+        kpis: {
+            totalHosts: hostCount,
+            totalSessions: sessionCount,
+            activeSessions: activeSessionCount,
+            totalVotes: totalVotesAgg._sum.voteCount || 0
+        },
+        hosts: hosts.map(h => ({
+            id: h.id,
+            username: h.username,
+            createdAt: h.createdAt,
+            sessionCount: h._count.votes
+        })),
+        chart: chartArray
+    };
 }

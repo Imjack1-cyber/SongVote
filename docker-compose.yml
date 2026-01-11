@@ -11,12 +11,15 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://user:password@db:5432/songvote?schema=public
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=JWT_SECRET=f27a5046ea27a0053eff583e4b0af1e1c0b2cf44399447b0e33e4e33d1e2372a
-      - ENCRYPTION_KEY=a4925bd7677e24c13b629515a5791efa1ddb22d5d99a720327450f56fd878e2e
+      - JWT_SECRET=add_your_own_jwt_secret_here
+      - ENCRYPTION_KEY=add_your_own_encryption_key_here
       - NEXT_PUBLIC_APP_URL=http://localhost:3000
     depends_on:
       - db
       - redis
+    volumes:
+      # PERSIST UPLOADS HERE
+      - uploads_data:/app/public/uploads
 
   db:
     image: postgres:15-alpine
@@ -39,3 +42,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  uploads_data:

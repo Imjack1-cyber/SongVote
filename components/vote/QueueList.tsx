@@ -3,7 +3,15 @@
 import { ThumbsUp, Music, Check, Trash2, Ban } from 'lucide-react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
-import DOMPurify from 'isomorphic-dompurify';
+
+// Helper to safely decode HTML entities without heavy DOM parsing
+const decodeHtmlEntities = (str: string) => {
+    return str.replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'");
+};
 
 interface QueueListProps {
   items: any[];
@@ -35,8 +43,8 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
         const isSelected = selectedIds.has(item.id);
         const isSubmitted = submittedIds.has(item.id);
         
-        // SECURITY: Sanitize song title to prevent XSS
-        const sanitizedTitle = DOMPurify.sanitize(item.song.title);
+        // React handles XSS protection automatically here
+        const safeTitle = decodeHtmlEntities(item.song.title);
         
         return (
             <motion.div 
@@ -77,10 +85,9 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
                     )}
                 </div>
                 <div className="min-w-0">
-                    <h4 
-                        className="font-bold text-sm md:text-base line-clamp-1" 
-                        dangerouslySetInnerHTML={{ __html: sanitizedTitle }} 
-                    />
+                   <h4 className="font-bold text-sm md:text-base line-clamp-1">
+                        {safeTitle}
+                    </h4>
                     <p className="text-xs md:text-sm opacity-60 truncate">{item.song.artist}</p>
                 </div>
             </div>

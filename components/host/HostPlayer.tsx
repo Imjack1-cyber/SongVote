@@ -80,11 +80,6 @@ function InternalPlayer({
   const [forceUrl, setForceUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // --- SLOT LOGIC (A/B) ---
-  const [slotAId, setSlotAId] = useState<string | null>(currentSong?.songId || null);
-  const [slotBId, setSlotBId] = useState<string | null>(nextUp?.songId || null);
-  const [activeSlot, setActiveSlot] = useState<'A' | 'B'>('A');
-
   // --- AUTO START ---
   useEffect(() => {
       if (!currentSong && nextUp) {
@@ -236,11 +231,11 @@ function InternalPlayer({
 
   if (!activeSong) {
       return (
-        <div className="card p-8 mb-8 flex flex-col items-center justify-center text-center opacity-60 border-2 border-dashed border-[var(--border)]">
+        <div id="host-player" className="card p-8 mb-8 flex flex-col items-center justify-center text-center opacity-60 border-2 border-dashed border-[var(--border)]">
             <Music2 className="w-12 h-12 mb-4 opacity-20" />
             <p className="font-medium">Queue is empty</p>
             <p className="text-sm opacity-60 mb-6">Suggestions will appear here automatically.</p>
-            <button onClick={() => setShowForceInput(true)} className="btn-primary text-sm flex items-center gap-2">
+            <button id="force-play-btn" onClick={() => setShowForceInput(true)} className="btn-primary text-sm flex items-center gap-2">
                 <Zap className="w-4 h-4" /> Force Play URL
             </button>
             {showForceInput && (
@@ -262,12 +257,11 @@ function InternalPlayer({
   }
 
   return (
-    <div className="card p-0 mb-8 overflow-hidden shadow-xl border border-[var(--border)] bg-[var(--surface)] transition-all duration-500 relative">
+    <div id="host-player" className="card p-0 mb-8 overflow-hidden shadow-xl border border-[var(--border)] bg-[var(--surface)] transition-all duration-500 relative">
       
       <div className={`relative bg-black transition-all duration-500 ease-in-out overflow-hidden ${!isVideoVisible ? 'h-0 opacity-0' : (isVideoExpanded ? 'aspect-video' : 'h-24 sm:h-32')}`}>
         <div className="absolute inset-0">
              <YouTube
-                // No key for smoother transition if possible, relies on videoId prop change
                 videoId={activeSong.songId}
                 opts={{
                     height: '100%',
@@ -328,11 +322,11 @@ function InternalPlayer({
 
           <div className="flex items-center justify-between">
               <div className="flex gap-2">
-                <button onClick={() => setShowForceInput(true)} className="p-2 rounded-lg hover:bg-[var(--foreground)]/5 text-[var(--foreground)]/50 hover:text-[var(--accent)] transition" title="Force Play"><Zap className="w-5 h-5" /></button>
-                <button onClick={() => setIsVideoVisible(!isVideoVisible)} className={`p-2 rounded-lg hover:bg-[var(--foreground)]/5 transition ${!isVideoVisible ? 'text-[var(--accent)]' : 'text-[var(--foreground)]/50 hover:text-[var(--foreground)]'}`} title={isVideoVisible ? "Hide Video" : "Show Video"}>
+                <button id="force-play-btn" onClick={() => setShowForceInput(true)} className="p-2 rounded-lg hover:bg-[var(--foreground)]/5 text-[var(--foreground)]/50 hover:text-[var(--accent)] transition" title="Force Play"><Zap className="w-5 h-5" /></button>
+                <button id="close-video-btn" onClick={() => setIsVideoVisible(!isVideoVisible)} className={`p-2 rounded-lg hover:bg-[var(--foreground)]/5 transition ${!isVideoVisible ? 'text-[var(--accent)]' : 'text-[var(--foreground)]/50 hover:text-[var(--foreground)]'}`} title={isVideoVisible ? "Hide Video" : "Show Video"}>
                     {isVideoVisible ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
                 </button>
-                <button onClick={onHardReset} className="p-2 rounded-lg hover:bg-[var(--foreground)]/5 text-red-500/70 hover:text-red-600 transition" title="Restart Player (Fix bugs)">
+                <button id="reset-player-btn" onClick={onHardReset} className="p-2 rounded-lg hover:bg-[var(--foreground)]/5 text-red-500/70 hover:text-red-600 transition" title="Restart Player (Fix bugs)">
                     <RefreshCcw className="w-5 h-5" />
                 </button>
               </div>

@@ -3,7 +3,15 @@
 import { useState } from 'react';
 import { Search, Plus, Loader2, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
-import DOMPurify from 'isomorphic-dompurify';
+
+// Simple entity decoder
+const decodeHtmlEntities = (str: string) => {
+    return str.replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'");
+};
 
 interface Song {
   id: string;
@@ -49,6 +57,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
     <div className="space-y-4">
       <form onSubmit={handleSearch} className="relative">
         <input 
+          id="song-search-input"
           type="text" 
           placeholder="Enter song name and press Enter..." 
           value={query}
@@ -66,9 +75,8 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
         </button>
       </form>
 
-      {/* Results List */}
       {results.length > 0 ? (
-        <div className="card divide-y divide-[var(--border)] max-h-[300px] overflow-y-auto shadow-xl z-50 relative animate-in fade-in slide-in-from-top-2">
+        <div id="search-results" className="card divide-y divide-[var(--border)] max-h-[300px] overflow-y-auto shadow-xl z-50 relative animate-in fade-in slide-in-from-top-2">
           {results.map((track) => (
             <div key={track.id} className="p-3 flex items-center justify-between hover:bg-[var(--foreground)]/5 transition">
               <div className="flex items-center gap-3 overflow-hidden">
@@ -87,10 +95,9 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
                   )}
                 </div>
                 <div className="overflow-hidden min-w-0">
-                  <p 
-                    className="font-medium text-sm truncate" 
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(track.title) }} 
-                  />
+                  <p className="font-medium text-sm truncate">
+                     {decodeHtmlEntities(track.title)}
+                  </p>
                   <p className="text-xs opacity-60 truncate">{track.artist}</p>
                 </div>
               </div>

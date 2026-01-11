@@ -13,6 +13,7 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
 *   **Party Mode:** A read-only "Visualizer" view optimized for TV screens.
 *   **Easy Access:** Guests join via QR code or PIN—no registration required.
 *   **Zero-Delay Playback:** Smart pre-loading ensures music never stops.
+*   **SuperAdmin Dashboard:** A "God View" for platform owners to monitor total hosts, active sessions, and voting activity across the entire instance.
 
 ## 🛠️ Tech Stack
 
@@ -57,6 +58,10 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
     
     # App
     NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+    # Super Admin (Optional)
+    # The UUID of the user who can access /admin
+    SUPER_ADMIN_ID="your-user-uuid-here" 
     ```
 
 4.  **Setup Database**
@@ -72,11 +77,17 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
 
 ## 📖 How to Use
 
+### For Hosts
 1.  **Register/Login:** Create a Host account on the homepage.
 2.  **Configure:** Go to **Settings** and enter your **YouTube Data API Key** (Free).
 3.  **Start Party:** Create a session. You will see the Host Player.
 4.  **Invite:** Click the QR code icon in the header. Guests scan it to join.
-5.  **Play:** Guests search and vote. The player handles the rest automatically!
+
+### For Super Admins
+1.  Register an account normally.
+2.  Copy your User ID from the database (or check the `/api/auth/me` endpoint).
+3.  Add `SUPER_ADMIN_ID="your_id"` to your `.env` file.
+4.  Navigate to `/admin` to view platform analytics.
 
 ## 📄 License
 

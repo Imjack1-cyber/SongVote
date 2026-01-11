@@ -54,3 +54,6 @@ bin/
 package-lock.json
 songvote.txt
 combine_code_gui.ps1
+Feature_Ideas.md
+config.json
+/public

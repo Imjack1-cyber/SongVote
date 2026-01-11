@@ -3,8 +3,7 @@ import { Heart } from 'lucide-react';
 
 export default function Footer({ hostName }: { hostName?: string }) {
   return (
-    // layout-footer applies: border-t, bg-surface, mt-auto
-    <footer className="layout-footer py-8 text-[var(--foreground)]">
+    <footer id="app-footer" className="layout-footer py-8 text-[var(--foreground)]">
       <div className="max-w-7xl mx-auto px-4 md:px-8">
         <div className="flex flex-col md:flex-row justify-between items-center gap-6">
 

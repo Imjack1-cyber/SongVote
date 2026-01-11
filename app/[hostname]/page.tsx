@@ -20,12 +20,7 @@ export default async function HostOverviewPage({ params }: { params: { hostname:
   });
 
   if (!host) redirect('/');
-
-  // If not owner, this page might show public sessions or 404
-  if (!isOwner) {
-    // For now, redirect guests to login or home
-    redirect('/login');
-  }
+  if (!isOwner) redirect('/login');
 
   const sessions = host.votes;
   const totalVotes = sessions.reduce((acc, s) => acc + s.queue.reduce((qAcc, q) => qAcc + q.voteCount, 0), 0);
@@ -35,22 +30,22 @@ export default async function HostOverviewPage({ params }: { params: { hostname:
     <div className="space-y-8">
       
       {/* Welcome Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div id="dashboard-header" className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="opacity-60 mt-1">Manage your sessions and view analytics.</p>
         </div>
         
-        {/* Create Session Form */}
         <form action={createSession} className="flex gap-2">
             <input 
+                id="create-session-input"
                 name="title" 
                 type="text" 
                 placeholder="Session Name (e.g. Party)" 
                 required
                 className="px-4 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
             />
-            <button type="submit" className="btn-primary whitespace-nowrap">
+            <button id="create-session-btn" type="submit" className="btn-primary whitespace-nowrap">
                 <Plus className="w-5 h-5 mr-2" />
                 New Session
             </button>
@@ -58,7 +53,7 @@ export default async function HostOverviewPage({ params }: { params: { hostname:
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div id="dashboard-stats" className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card p-6 flex flex-col justify-between h-32">
           <div className="flex justify-between items-start">
             <span className="text-sm font-medium opacity-60">Total Sessions</span>

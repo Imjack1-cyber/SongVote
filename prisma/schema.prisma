@@ -14,6 +14,9 @@ model Host {
   createdAt    DateTime @default(now())
 
   youtubeApiKey     String?  
+  tutorialCompleted Boolean  @default(false)
+  
+  avatarUrl         String?  
 
   settings     GlobalSettings?
   votes        VoteSession[]
@@ -56,7 +59,6 @@ model VoteSession {
   backupCollectionId  String?  
   autoAddToCollectionId String? 
 
-  // TOGGLES
   enableReactions      Boolean @default(false) 
   enableDuplicateCheck Boolean @default(true)
   enableRegionCheck    Boolean @default(true)

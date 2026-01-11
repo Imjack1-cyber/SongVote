@@ -16,7 +16,6 @@ export default function QRCodeModal({ isOpen, onClose, sessionTitle }: QRCodeMod
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // FIX: Use origin + /join
       setJoinUrl(`${window.location.origin}/join`);
     }
   }, []);

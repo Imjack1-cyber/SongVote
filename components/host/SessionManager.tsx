@@ -14,6 +14,7 @@ interface Stats {
     timeLeft: number;
     permissions?: Permissions;
     isHost: boolean;
+    karma?: number;
 }
 
 export default function SessionManager({ sessionId, currentUserId }: { sessionId: string, currentUserId: string }) {
@@ -55,7 +56,6 @@ export default function SessionManager({ sessionId, currentUserId }: { sessionId
         }
     };
 
-    // --- NEW: CLEAR SESSION HANDLER ---
     const handleClearSession = () => {
         if (!confirm("DANGER: This will delete ALL songs from the Queue, History, and stop playback. This cannot be undone. Continue?")) return;
 
@@ -85,13 +85,14 @@ export default function SessionManager({ sessionId, currentUserId }: { sessionId
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                     </button>
                     <button 
+                        id="reset-timer-btn"
                         onClick={() => handleResetTimers()}
                         className="px-3 py-1.5 text-sm border border-orange-200 bg-orange-50 text-orange-700 rounded hover:bg-orange-100 flex items-center gap-2"
                     >
                         <TimerReset className="w-4 h-4" /> Reset Timers
                     </button>
-                    {/* CLEAR BUTTON */}
                     <button 
+                        id="clear-session-btn"
                         onClick={handleClearSession}
                         className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 flex items-center gap-2"
                     >
@@ -100,7 +101,7 @@ export default function SessionManager({ sessionId, currentUserId }: { sessionId
                 </div>
             </div>
 
-            <div className="overflow-x-auto border border-[var(--border)] rounded-lg bg-[var(--surface)]">
+            <div id="user-list-table" className="overflow-x-auto border border-[var(--border)] rounded-lg bg-[var(--surface)]">
                 <table className="w-full text-sm text-left">
                     <thead className="bg-[var(--foreground)]/5 text-[var(--foreground)]/60 font-medium">
                         <tr>

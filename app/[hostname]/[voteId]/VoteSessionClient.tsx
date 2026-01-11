@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSocket } from '@/hooks/useSocket';
-import { Share2, Settings, Wifi, WifiOff, ShieldAlert, Check, Send, Clock, AlertCircle, Info, Trash2, Ban, History, Search, QrCode, Pause, SkipForward, Printer, Radio } from 'lucide-react';
+import { Share2, Settings, Wifi, WifiOff, ShieldAlert, Check, Send, Clock, AlertCircle, Info, Trash2, Ban, History, Search, QrCode, Pause, SkipForward, Printer, Radio, MonitorPlay } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import SongSearch from '@/components/vote/SongSearch';
@@ -239,7 +239,6 @@ export default function VoteSessionClient({
   };
 
   const handleReaction = (type: string) => {
-      // Allow Host OR Guest (voterId)
       if (!socket || (!isHost && !voterId)) return;
       socket.emit('send-reaction', { sessionId: voteId, type, voterId: voterId || 'HOST' });
   };
@@ -263,7 +262,6 @@ export default function VoteSessionClient({
   return (
     <div className="max-w-3xl mx-auto space-y-8 pb-32 relative">
       
-      {/* Reaction Layer - Render for everyone if enabled */}
       {enableReactions && <ReactionOverlay sessionId={voteId} />}
 
       <div className="flex items-start justify-between">
@@ -279,24 +277,36 @@ export default function VoteSessionClient({
             <p className="opacity-60">Vote for the next track.</p>
         </div>
         <div className="flex gap-2">
+            
             {canPrint && <Link href={`/${hostName}/${voteId}/print`} target="_blank" className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5 text-[var(--foreground)] transition"><Printer className="w-5 h-5" /></Link>}
-            <button onClick={() => setShowQR(true)} className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5 text-[var(--foreground)] transition" title="Show Join Code"><QrCode className="w-5 h-5" /></button>
-            <button onClick={handleShare} className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5">{showShareTooltip ? <Check className="w-5 h-5 text-green-600" /> : <Share2 className="w-5 h-5" />}</button>
-            {isHost && <Link href={`/${hostName}/${voteId}/settings`} target="_blank" className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5"><Settings className="w-5 h-5" /></Link>}
+            
+            {isHost && (
+                <Link id="visualizer-btn" href={`/${hostName}/${voteId}/visualizer`} target="_blank" className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5 text-[var(--accent)] transition" title="Open TV Visualizer">
+                    <MonitorPlay className="w-5 h-5" />
+                </Link>
+            )}
+
+            <button id="qr-btn" onClick={() => setShowQR(true)} className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5 text-[var(--foreground)] transition" title="Show Join Code"><QrCode className="w-5 h-5" /></button>
+            
+            <button id="share-btn" onClick={handleShare} className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5">{showShareTooltip ? <Check className="w-5 h-5 text-green-600" /> : <Share2 className="w-5 h-5" />}</button>
+            
+            {isHost && <Link id="session-settings-link" href={`/${hostName}/${voteId}/settings`} className="p-2 rounded-lg border bg-[var(--surface)] hover:bg-[var(--foreground)]/5"><Settings className="w-5 h-5" /></Link>}
         </div>
       </div>
 
       {isHost && (
-          <HostPlayer 
-            currentSong={currentSong} 
-            nextUp={queue.length > 0 ? queue[0] : null} 
-            voteId={voteId} 
-            onSongStarted={handleSongStarted} 
-            onSongEnded={handleSongEnded}
-            onSongBack={handleSongBack}
-            onForcePlay={handleForcePlay}
-            initialSyncState={playbackState}
-          />
+          <div id="host-player">
+            <HostPlayer 
+                currentSong={currentSong} 
+                nextUp={queue.length > 0 ? queue[0] : null} 
+                voteId={voteId} 
+                onSongStarted={handleSongStarted} 
+                onSongEnded={handleSongEnded}
+                onSongBack={handleSongBack}
+                onForcePlay={handleForcePlay}
+                initialSyncState={playbackState}
+            />
+          </div>
       )}
 
       {!isHost && canControlPlayer && currentSong && (
@@ -332,7 +342,6 @@ export default function VoteSessionClient({
           </div>
       )}
 
-      {/* REACTION BAR - Show for Guest OR Host if enabled */}
       {enableReactions && (isHost || voterId) && (
           <div className="flex justify-center gap-4 py-4 animate-in slide-in-from-bottom-4">
               {['fire', 'heart', 'party', 'poop'].map(type => (
@@ -363,7 +372,7 @@ export default function VoteSessionClient({
           <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm text-center">View Only Mode</div>
       )}
 
-      <div>
+      <div id="up-next-list">
         <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-lg">Up Next <span className="bg-[var(--foreground)]/10 text-xs px-2 py-1 rounded-full">{queue.length}</span></h3>
             {voterId && (
@@ -378,6 +387,7 @@ export default function VoteSessionClient({
         <QueueList items={queue} onToggle={handleToggleVote} selectedIds={selectedIds} submittedIds={submittedIds} isHost={isHost} onRemove={handleRemoveSong} onBan={handleBanUser} />
       </div>
 
+      <div id="played-history-list">
       {history.length > 0 && (
           <div className="mt-12 pt-8 border-t border-[var(--border)]">
               <div className="flex items-center justify-between mb-6">
@@ -418,6 +428,7 @@ export default function VoteSessionClient({
               </div>
           </div>
       )}
+      </div>
 
       {selectedIds.size > 0 && (
           <div className="fixed bottom-6 left-0 right-0 px-4 flex justify-center z-50">

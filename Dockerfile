@@ -42,6 +42,11 @@ COPY --from=builder /app/prisma ./prisma
 # Copy Next.js build output
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 
+# --- UPLOAD PERSISTENCE SETUP ---
+# Create the uploads directory and ensure nextjs user owns it
+# This is critical so the volume mount works correctly with permissions
+RUN mkdir -p public/uploads && chown nextjs:nodejs public/uploads
+
 USER nextjs
 
 EXPOSE 3000
