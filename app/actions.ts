@@ -498,62 +498,66 @@ export async function updateSessionDefaultPermissions(sessionId: string, permiss
 
 export async function getAdminDashboardData() {
     const user = await getCurrentUser();
-    
-    // STRICT AUTH CHECK using Env Variable
-    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) {
-        // We throw an error here which will be caught by the UI or Next.js Error Boundary
-        throw new Error("Unauthorized Access: Super Admin Only");
-    }
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized Access: Super Admin Only");
 
-    // Parallelize queries for performance
     const [hostCount, sessionCount, activeSessionCount, totalVotesAgg, hosts, recentItems] = await Promise.all([
         prisma.host.count(),
         prisma.voteSession.count(),
         prisma.voteSession.count({ where: { isActive: true } }),
         prisma.queueItem.aggregate({ _sum: { voteCount: true } }),
-        prisma.host.findMany({
-            take: 20,
-            orderBy: { createdAt: 'desc' },
-            include: { 
-                _count: { 
-                    select: { votes: true } 
-                } 
-            }
-        }),
-        // Fetch queue items from last 30 days for the chart
-        prisma.queueItem.findMany({
-            where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
-            select: { createdAt: true }
-        })
+        prisma.host.findMany({ take: 20, orderBy: { createdAt: 'desc' }, include: { _count: { select: { votes: true } } } }),
+        prisma.queueItem.findMany({ where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }, select: { createdAt: true } })
     ]);
 
-    // Aggregate Data for Chart (Group by Date)
     const chartDataMap = new Map<string, number>();
-    
     recentItems.forEach(item => {
-        const dateKey = item.createdAt.toISOString().split('T')[0]; // YYYY-MM-DD
+        const dateKey = item.createdAt.toISOString().split('T')[0];
         chartDataMap.set(dateKey, (chartDataMap.get(dateKey) || 0) + 1);
     });
 
-    // Fill in missing days (optional but good for charts)
-    // For simplicity, we just return the existing data points sorted
     const chartArray = Array.from(chartDataMap.entries())
         .map(([date, count]) => ({ date, count }))
         .sort((a,b) => a.date.localeCompare(b.date));
 
     return {
-        kpis: {
-            totalHosts: hostCount,
-            totalSessions: sessionCount,
-            activeSessions: activeSessionCount,
-            totalVotes: totalVotesAgg._sum.voteCount || 0
-        },
-        hosts: hosts.map(h => ({
-            id: h.id,
-            username: h.username,
-            createdAt: h.createdAt,
-            sessionCount: h._count.votes
-        })),
+        kpis: { totalHosts: hostCount, totalSessions: sessionCount, activeSessions: activeSessionCount, totalVotes: totalVotesAgg._sum.voteCount || 0 },
+        hosts: hosts.map(h => ({ id: h.id, username: h.username, createdAt: h.createdAt, sessionCount: h._count.votes })),
         chart: chartArray
     };
+}
+
+// --- GLOBAL ANNOUNCEMENTS ---
+
+const ANNOUNCEMENT_KEY = 'active_global_announcement';
+
+export async function sendGlobalAnnouncement(message: string, type: 'info' | 'warning' | 'error') {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+    
+    if (!message.trim()) return;
+
+    const payload = { message, type, timestamp: Date.now() };
+    
+    // 1. Persist for new users loading page
+    await redis.set(ANNOUNCEMENT_KEY, JSON.stringify(payload));
+    
+    // 2. Broadcast via Pub/Sub to all connected sockets
+    // We publish to the channel that server.ts is listening to
+    await redis.publish('global_announcements', JSON.stringify(payload));
+    
+    revalidatePath('/');
+}
+
+export async function clearGlobalAnnouncement() {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    await redis.del(ANNOUNCEMENT_KEY);
+    await redis.publish('global_announcements', JSON.stringify({ message: null })); // Signal clear
+    revalidatePath('/');
+}
+
+export async function getGlobalAnnouncement() {
+    const data = await redis.get(ANNOUNCEMENT_KEY);
+    return data ? JSON.parse(data) : null;
 }

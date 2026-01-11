@@ -1,9 +1,10 @@
 import { getAdminDashboardData } from '@/app/actions';
 import AdminDashboard from '@/components/admin/AdminDashboard';
+import AnnouncementControl from '@/components/admin/AnnouncementControl'; 
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 
-export const dynamic = 'force-dynamic'; // Ensure no caching of admin stats
+export const dynamic = 'force-dynamic';
 
 export default async function AdminPage() {
   const user = await getCurrentUser();
@@ -15,10 +16,14 @@ export default async function AdminPage() {
   const data = await getAdminDashboardData();
 
   return (
-    <AdminDashboard 
-        kpis={data.kpis} 
-        hosts={data.hosts} 
-        chartData={data.chart} 
-    />
+    <div className="space-y-8">
+        <AnnouncementControl /> {/* NEW */}
+        
+        <AdminDashboard 
+            kpis={data.kpis} 
+            hosts={data.hosts} 
+            chartData={data.chart} 
+        />
+    </div>
   );
 }

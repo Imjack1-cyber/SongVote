@@ -4,6 +4,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
 import { redis } from './lib/redis';
+import Redis from 'ioredis'; // Need distinct client for Sub
 import { checkPermission } from './lib/permissions';
 import { checkRateLimit } from './lib/ratelimit';
 import { z } from 'zod';
@@ -18,6 +19,14 @@ redis.on('error', (err) => {
     if ((err as any).code !== 'ECONNREFUSED') {
         console.error('Redis Client Error', err);
     }
+});
+
+// --- REDIS SUBSCRIBER FOR GLOBAL ANNOUNCEMENTS ---
+// We need a separate connection because a client in Subscribe mode cannot issue commands
+const redisSub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+
+redisSub.subscribe('global_announcements', (err) => {
+    if (err) console.error('Failed to subscribe to announcements', err);
 });
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -322,6 +331,19 @@ app.prepare().then(() => {
     path: '/api/socket',
     addTrailingSlash: false,
     cors: { origin: '*' }
+  });
+
+  // --- PUB/SUB HANDLER ---
+  redisSub.on('message', (channel, message) => {
+    if (channel === 'global_announcements') {
+        try {
+            const data = JSON.parse(message);
+            // Broadcast to everyone connected
+            io.emit('global-announcement', data);
+        } catch (e) {
+            console.error("Announcement Broadcast Error", e);
+        }
+    }
   });
 
   io.on('connection', (socket) => {

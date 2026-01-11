@@ -8,7 +8,7 @@ export interface YouTubeSearchResult {
   album: string | null;
   albumArtUrl: string | null;
   durationMs: number;
-  isPlayable?: boolean; // New field for Region Check results
+  isPlayable?: boolean;  
 }
 
 /**
