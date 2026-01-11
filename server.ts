@@ -322,9 +322,17 @@ const broadcastState = async (io: Server, sessionId: string) => {
 };
 
 app.prepare().then(() => {
-  const httpServer = createServer((req, res) => {
-    const parsedUrl = parse(req.url!, true);
-    handle(req, res, parsedUrl);
+  const httpServer = createServer(async (req, res) => {
+    try {
+        const parsedUrl = parse(req.url!, true);
+        await handle(req, res, parsedUrl);
+    } catch (err) {
+        // Suppress expected 'aborted' errors from logs
+        if ((err as any).code === 'ECONNRESET' || (err as any).message === 'aborted') {
+            return;
+        }
+        console.error('Error handling request:', err);
+    }
   });
 
   const io = new Server(httpServer, {
@@ -348,6 +356,13 @@ app.prepare().then(() => {
 
   io.on('connection', (socket) => {
     
+    // --- METRICS TRACKING ---
+    redis.incr('system:active_connections');
+
+    socket.on('disconnect', () => {
+        redis.decr('system:active_connections');
+    });
+
     // --- JOIN LOGIC ---
     socket.on('join-room', async (roomId) => {
       if (typeof roomId !== 'string' || roomId.length > 64) return;

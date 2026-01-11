@@ -30,7 +30,6 @@ interface AdminDashboardProps {
 export default function AdminDashboard({ kpis, hosts, chartData }: AdminDashboardProps) {
   
   const handleBan = async (id: string, currentStatus: boolean) => {
-      // Unban logic
       if (currentStatus) {
           if(!confirm("Unban this host?")) return;
           await toggleHostBan(id);
@@ -38,9 +37,8 @@ export default function AdminDashboard({ kpis, hosts, chartData }: AdminDashboar
           return;
       }
 
-      // Ban logic
       const reason = prompt("Enter a reason for banning this user (visible to them):");
-      if (reason === null) return; // Cancelled
+      if (reason === null) return;
       if (!reason.trim()) {
           toast.error("A reason is required to ban a user.");
           return;
@@ -111,7 +109,7 @@ export default function AdminDashboard({ kpis, hosts, chartData }: AdminDashboar
         {/* Chart Section */}
         <div className="lg:col-span-2 card p-6 min-w-0">
            <h2 className="text-xl font-bold mb-6">Activity (Songs Queued - Last 30 Days)</h2>
-           <div className="w-full" style={{ height: '300px', position: 'relative' }}>
+           <div style={{ width: '100%', height: '300px', position: 'relative' }}>
               <ResponsiveContainer width="100%" height="100%">
                  <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
@@ -159,7 +157,6 @@ export default function AdminDashboard({ kpis, hosts, chartData }: AdminDashboar
                                 <div className="text-[9px] uppercase tracking-wider opacity-50">Sessions</div>
                             </div>
                             
-                            {/* Management Actions */}
                             <button 
                                 onClick={() => handleBan(host.id, host.isBanned)}
                                 className={`p-1.5 rounded transition ${host.isBanned ? 'bg-red-500 text-white' : 'hover:bg-[var(--foreground)]/10 text-gray-400'}`}
