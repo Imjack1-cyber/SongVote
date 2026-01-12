@@ -12,6 +12,7 @@ import * as cookie from 'cookie';
 import { jwtVerify } from 'jose';
 import { getPlaylistItems, searchYouTube, YouTubeSearchResult } from './lib/youtube';
 import { logger } from './lib/logger';
+import { selectSmartTrack, CandidateSong } from './lib/smartRadio';
 
 const prisma = new PrismaClient();
 
@@ -25,7 +26,7 @@ redis.on('error', (err) => {
 // --- REDIS SUBSCRIBER ---
 const redisSub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
-// Subscribing to ticket_updates channel
+// Subscribing to channels
 redisSub.subscribe('global_announcements', 'admin_channel', 'ticket_updates', (err) => {
     if (err) {
         logger.error({ err, source: 'redis_sub' }, 'Failed to subscribe to channels');
@@ -148,37 +149,44 @@ const handleAutoAdd = async (sessionId: string, songId: string) => {
     } catch (e) { logger.error({ err: e, sessionId, songId }, "Auto-Add Context Error"); }
 };
 
-// --- SMART RADIO LOGIC ---
+// --- SMART RADIO LOGIC (PHASE 3 INTEGRATION) ---
 const playRadioSong = async (sessionId: string) => {
     logger.info({ sessionId }, 'Attempting Radio Play');
+    
+    // 1. Guard: If queue has items, do nothing
     const queueCount = await prisma.queueItem.count({
         where: { voteSessionId: sessionId, status: 'LIVE' }
     });
     if (queueCount > 0) return null; 
+
+    // 2. Load Session Config
     const session = await prisma.voteSession.findUnique({ where: { id: sessionId } });
     if (!session) return null;
-    let selectedSong: { id: string, title: string, artist: string, albumArtUrl: string | null } | null = null;
+
+    let candidates: CandidateSong[] = [];
+
+    // 3. Strategy A: Collection (Highest Priority)
     if (session.backupCollectionId) {
         const items = await prisma.collectionItem.findMany({
             where: { collectionId: session.backupCollectionId },
             include: { song: true }
         });
-        if (items.length > 0) {
-            const lastPlayed = await prisma.queueItem.findFirst({
-                where: { voteSessionId: sessionId, status: 'PLAYED' },
-                orderBy: { updatedAt: 'desc' }
-            });
-            let pool = items;
-            if (lastPlayed && pool.length > 1) pool = pool.filter(i => i.songId !== lastPlayed.songId);
-            if (pool.length === 0) pool = items;
-            const randomItem = pool[Math.floor(Math.random() * pool.length)];
-            selectedSong = randomItem.song;
-        }
+        candidates = items.map(i => ({
+            id: i.song.id,
+            title: i.song.title,
+            artist: i.song.artist,
+            albumArtUrl: i.song.albumArtUrl,
+            playCount: i.song.playCount,
+            reactionCount: i.song.reactionCount
+        }));
     }
-    if (!selectedSong && session.backupPlaylistId) {
+
+    // 4. Strategy B: YouTube Playlist (Backup if Collection empty/unset)
+    if (candidates.length === 0 && session.backupPlaylistId) {
         const cacheKey = `radio_playlist:${session.backupPlaylistId}`;
         let playlistItems: YouTubeSearchResult[] = [];
         const cached = await redis.get(cacheKey);
+        
         if (cached) {
             playlistItems = JSON.parse(cached);
         } else {
@@ -188,52 +196,96 @@ const playRadioSong = async (sessionId: string) => {
                     await redis.set(cacheKey, JSON.stringify(playlistItems));
                     await redis.expire(cacheKey, 60 * 60 * 24); 
                 }
-            } catch (e) { logger.error({ err: e, sessionId }, "Radio Playlist Fetch Failed"); }
-        }
-        if (playlistItems.length > 0) {
-            const lastPlayed = await prisma.queueItem.findFirst({
-                where: { voteSessionId: sessionId, status: 'PLAYED' },
-                orderBy: { updatedAt: 'desc' }
-            });
-            let pool = playlistItems;
-            if (lastPlayed && pool.length > 1) pool = pool.filter(p => p.id !== lastPlayed.songId);
-            if (pool.length === 0) pool = playlistItems;
-            const randomTrack = pool[Math.floor(Math.random() * pool.length)];
-            selectedSong = { id: randomTrack.id, title: randomTrack.title, artist: randomTrack.artist, albumArtUrl: randomTrack.albumArtUrl };
-        }
-    }
-    if (!selectedSong) {
-        const history = await prisma.queueItem.findMany({
-            where: { voteSessionId: sessionId, status: 'PLAYED' },
-            select: { songId: true, song: true },
-            orderBy: { updatedAt: 'desc' },
-            take: 50 
-        });
-        if (history.length > 0) {
-            const bufferSize = Math.min(5, Math.floor(history.length * 0.5));
-            const recentIds = new Set(history.slice(0, bufferSize).map(h => h.songId));
-            const allPlayedIds = await prisma.queueItem.findMany({
-                where: { voteSessionId: sessionId, status: 'PLAYED' },
-                select: { songId: true, song: true },
-                distinct: ['songId']
-            });
-            const validPool = allPlayedIds.filter(item => !recentIds.has(item.songId));
-            const finalPool = validPool.length > 0 ? validPool : (allPlayedIds.length > 1 ? allPlayedIds.slice(1) : allPlayedIds);
-            if (finalPool.length > 0) {
-                const randomItem = finalPool[Math.floor(Math.random() * finalPool.length)];
-                selectedSong = randomItem.song;
+            } catch (e) { 
+                logger.error({ err: e, sessionId }, "Radio Playlist Fetch Failed"); 
             }
         }
+
+        if (playlistItems.length > 0) {
+            // Fetch stats for these songs from DB to enable weighting
+            const songIds = playlistItems.map(p => p.id);
+            const knownSongs = await prisma.song.findMany({
+                where: { id: { in: songIds } },
+                select: { id: true, playCount: true, reactionCount: true }
+            });
+            const statsMap = new Map(knownSongs.map(s => [s.id, s]));
+
+            candidates = playlistItems.map(p => {
+                const stats = statsMap.get(p.id);
+                return {
+                    id: p.id,
+                    title: p.title,
+                    artist: p.artist,
+                    albumArtUrl: p.albumArtUrl,
+                    playCount: stats?.playCount || 0,
+                    reactionCount: stats?.reactionCount || 0
+                };
+            });
+        }
     }
-    if (!selectedSong) return null; 
+
+    // 5. Strategy C: Session History (Last Resort)
+    if (candidates.length === 0) {
+        const historyItems = await prisma.queueItem.findMany({
+            where: { voteSessionId: sessionId, status: 'PLAYED' },
+            distinct: ['songId'],
+            select: { song: true },
+            orderBy: { updatedAt: 'desc' },
+            take: 100 // Look back deeper for variety
+        });
+        
+        candidates = historyItems.map(i => ({
+            id: i.song.id,
+            title: i.song.title,
+            artist: i.song.artist,
+            albumArtUrl: i.song.albumArtUrl,
+            playCount: i.song.playCount,
+            reactionCount: i.song.reactionCount
+        }));
+    }
+
+    // 6. Get Recent History for Cooldown Logic
+    const recentHistory = await prisma.queueItem.findMany({
+        where: { voteSessionId: sessionId, status: 'PLAYED' },
+        orderBy: { updatedAt: 'desc' },
+        take: 50,
+        select: { songId: true }
+    });
+
+    // 7. Execute Smart Selection
+    const selectedSong = selectSmartTrack(sessionId, candidates, recentHistory);
+
+    if (!selectedSong) {
+        logger.warn({ sessionId }, 'Radio failed to select a track (No candidates)');
+        return null; 
+    }
+
+    // 8. Queue the Winner
+    // Ensure Song exists in DB (needed if coming fresh from a Playlist)
     await prisma.song.upsert({
         where: { id: selectedSong.id },
         update: {},
-        create: { id: selectedSong.id, title: selectedSong.title, artist: selectedSong.artist, album: 'Radio', albumArtUrl: selectedSong.albumArtUrl, durationMs: 0 }
+        create: { 
+            id: selectedSong.id, 
+            title: selectedSong.title, 
+            artist: selectedSong.artist, 
+            album: 'Radio', 
+            albumArtUrl: selectedSong.albumArtUrl, 
+            durationMs: 0 
+        }
     });
+
     const radioItem = await prisma.queueItem.create({
-        data: { voteSessionId: sessionId, songId: selectedSong.id, status: 'PLAYING', voteCount: 0, suggestedByGuestId: null, isRadio: true }
+        data: { 
+            voteSessionId: sessionId, 
+            songId: selectedSong.id, 
+            status: 'PLAYING', 
+            voteCount: 0, 
+            suggestedByGuestId: null, 
+            isRadio: true 
+        }
     });
+
     logger.info({ sessionId, songId: selectedSong.id }, 'Radio Song Started');
     return radioItem.id;
 };
@@ -443,16 +495,50 @@ app.prepare().then(() => {
         } catch (e) { logger.error({ err: e, sessionId, guestId }, "Chat Error"); }
     });
 
-    // ... (Standard Events) ...
+    // --- REACTION HANDLER (UPDATED FOR SMART RADIO) ---
     socket.on('send-reaction', async (rawPayload) => {
         const result = ReactionSchema.safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, type, voterId } = result.data;
         const limitId = voterId || socket.handshake.address;
+        
+        // 1. Rate Limiting
         if (!(await checkRateLimit(`react:${limitId}`, 10, 5))) return;
+
+        // 2. Check Feature Flag
         const session = await prisma.voteSession.findUnique({ where: { id: sessionId }, select: { enableReactions: true }});
         if (!session?.enableReactions) return;
+
+        // 3. Broadcast Animation immediately (Optimistic UI)
         io.to(sessionId).emit('reaction', { type, id: Date.now() });
+
+        // 4. Update Database for Smart Radio (Async, non-blocking)
+        try {
+            // Find current song
+            const playingItem = await prisma.queueItem.findFirst({
+                where: { voteSessionId: sessionId, status: 'PLAYING' },
+                select: { id: true, songId: true }
+            });
+
+            if (playingItem) {
+                // Increment Specific Play Count
+                await prisma.queueItem.update({
+                    where: { id: playingItem.id },
+                    data: { reactionCount: { increment: 1 } }
+                });
+
+                // Increment Global Song Engagement
+                await prisma.song.update({
+                    where: { id: playingItem.songId },
+                    data: { reactionCount: { increment: 1 } }
+                });
+                
+                logger.debug({ sessionId, songId: playingItem.songId, type }, 'Reaction Persisted');
+            }
+        } catch (e) {
+            // Log but don't crash socket
+            logger.error({ err: e, sessionId }, "Failed to persist reaction");
+        }
     });
 
     socket.on('player-update', async (rawPayload) => {

@@ -110,6 +110,7 @@ model Song {
   albumArtUrl String? 
   durationMs  Int
   playCount   Int      @default(0)
+  reactionCount Int    @default(0) 
   cachedAt    DateTime @default(now())
   queueItems  QueueItem[]
   collectionItems CollectionItem[]
@@ -124,6 +125,7 @@ model QueueItem {
   suggestedByGuestId String?
   guest              GuestAccount? @relation(fields: [suggestedByGuestId], references: [id])
   voteCount     Int         @default(0)
+  reactionCount Int         @default(0) 
   status        QueueStatus @default(PENDING)
   isRadio       Boolean     @default(false)
   createdAt     DateTime    @default(now())
