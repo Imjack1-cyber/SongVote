@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import { searchYouTube } from '@/lib/youtube';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import { logger } from '@/lib/logger';
 
 // --- TICKET SYSTEM ACTIONS ---
 
@@ -25,8 +26,6 @@ export async function createSupportTicket(formData: FormData) {
     const priority = formData.get('priority') as 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL';
 
     if (!subject || !content) throw new Error("Missing fields");
-
-    console.log(`[ACTION] Creating ticket for user ${user.username}`);
 
     const ticket = await prisma.supportTicket.create({
         data: {
@@ -45,15 +44,15 @@ export async function createSupportTicket(formData: FormData) {
         }
     });
 
+    logger.info({ userId: user.userId, ticketId: ticket.id, subject }, 'Support Ticket Created');
+
     const payload = {
         type: 'NEW_TICKET',
         data: { id: ticket.id, subject: ticket.subject, host: user.username },
         notifyAdmin: true 
     };
 
-    console.log('[ACTION] Publishing NEW_TICKET to ticket_updates:', payload);
     await redis.publish('ticket_updates', JSON.stringify(payload));
-
     revalidatePath(`/${user.username}/support`);
 }
 
@@ -61,14 +60,15 @@ export async function replyToTicket(ticketId: string, content: string) {
     const user = await getCurrentUser();
     if (!user) throw new Error("Unauthorized");
 
-    console.log(`[ACTION] User ${user.username} replying to ticket ${ticketId}`);
-
     const ticket = await prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) throw new Error("Ticket not found");
 
     const isAdmin = user.userId === process.env.SUPER_ADMIN_ID;
 
-    if (!isAdmin && ticket.hostId !== user.userId) throw new Error("Unauthorized access to ticket");
+    if (!isAdmin && ticket.hostId !== user.userId) {
+        logger.warn({ userId: user.userId, ticketId }, 'Unauthorized Ticket Access Attempt');
+        throw new Error("Unauthorized access to ticket");
+    }
 
     const message = await prisma.ticketMessage.create({
         data: {
@@ -90,7 +90,6 @@ export async function replyToTicket(ticketId: string, content: string) {
         }
     });
 
-    // Unified Notification Payload
     const payload = {
         type: 'TICKET_REPLY',
         ticketId: ticket.id,
@@ -100,8 +99,8 @@ export async function replyToTicket(ticketId: string, content: string) {
         targetUserId: isAdmin ? ticket.hostId : null 
     };
 
-    console.log('[ACTION] Publishing TICKET_REPLY to ticket_updates:', payload);
     await redis.publish('ticket_updates', JSON.stringify(payload));
+    logger.info({ userId: user.userId, ticketId, isAdmin }, 'Ticket Reply Sent');
 
     if (isAdmin) revalidatePath('/admin/support');
     else revalidatePath(`/${user.username}/support`);
@@ -112,7 +111,6 @@ export async function markTicketRead(ticketId: string) {
     if (!user) return;
 
     const isAdmin = user.userId === process.env.SUPER_ADMIN_ID;
-    console.log(`[ACTION] Marking ticket ${ticketId} read for ${isAdmin ? 'Admin' : 'Host'}`);
 
     await prisma.supportTicket.update({
         where: { id: ticketId },
@@ -147,8 +145,6 @@ export async function updateTicketStatus(ticketId: string, status: 'OPEN' | 'RES
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
 
-    console.log(`[ACTION] Updating status for ticket ${ticketId} to ${status}`);
-
     const ticket = await prisma.supportTicket.update({
         where: { id: ticketId },
         data: { 
@@ -165,9 +161,8 @@ export async function updateTicketStatus(ticketId: string, status: 'OPEN' | 'RES
         targetUserId: ticket.hostId
     };
 
-    console.log('[ACTION] Publishing TICKET_STATUS to ticket_updates:', payload);
     await redis.publish('ticket_updates', JSON.stringify(payload));
-
+    logger.info({ userId: user.userId, ticketId, status }, 'Ticket Status Updated');
     revalidatePath('/admin/support');
 }
 
@@ -195,8 +190,6 @@ export async function getAllTicketsAdmin() {
     });
 }
 
-// ... (Rest of existing actions: submitFeedback, getSystemHealth, etc. remain unchanged) ...
-
 export async function submitFeedback(formData: FormData) {
     const content = formData.get('content') as string;
     const type = formData.get('type') as 'BUG' | 'SUGGESTION' | 'OTHER';
@@ -204,8 +197,10 @@ export async function submitFeedback(formData: FormData) {
     const guestId = cookies().get('guest_id')?.value;
     const userId = hostUser?.userId || guestId || null;
     if (!content || !type) throw new Error("Missing fields");
+    
     const feedback = await prisma.systemFeedback.create({ data: { content, type, userId } });
     await redis.publish('admin_channel', JSON.stringify({ type: 'NEW_FEEDBACK', data: feedback }));
+    logger.info({ userId, type }, 'Feedback Submitted');
 }
 
 export async function getSystemFeedback() {
@@ -274,20 +269,27 @@ export async function uploadHostAvatar(formData: FormData) {
     if (!user) throw new Error('Unauthorized');
     const file = formData.get('avatarFile') as File;
     const fallbackUrl = formData.get('avatarUrl') as string;
-    if (file && file.size > 0) {
-        if (!file.type.startsWith('image/')) throw new Error('File must be an image');
-        if (file.size > 5 * 1024 * 1024) throw new Error('File too large (Max 5MB)');
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
-        const ext = file.name.split('.').pop()?.substring(0, 4) || 'png';
-        const filename = `${user.userId}-${Date.now()}.${ext}`;
-        const uploadDir = join(process.cwd(), 'public', 'uploads');
-        await mkdir(uploadDir, { recursive: true });
-        await writeFile(join(uploadDir, filename), buffer);
-        const publicPath = `/uploads/${filename}`;
-        await prisma.host.update({ where: { id: user.userId }, data: { avatarUrl: publicPath } });
-    } else if (fallbackUrl) {
-        await prisma.host.update({ where: { id: user.userId }, data: { avatarUrl: fallbackUrl } });
+    
+    try {
+        if (file && file.size > 0) {
+            if (!file.type.startsWith('image/')) throw new Error('File must be an image');
+            if (file.size > 5 * 1024 * 1024) throw new Error('File too large (Max 5MB)');
+            const bytes = await file.arrayBuffer();
+            const buffer = Buffer.from(bytes);
+            const ext = file.name.split('.').pop()?.substring(0, 4) || 'png';
+            const filename = `${user.userId}-${Date.now()}.${ext}`;
+            const uploadDir = join(process.cwd(), 'public', 'uploads');
+            await mkdir(uploadDir, { recursive: true });
+            await writeFile(join(uploadDir, filename), buffer);
+            const publicPath = `/uploads/${filename}`;
+            await prisma.host.update({ where: { id: user.userId }, data: { avatarUrl: publicPath } });
+            logger.info({ userId: user.userId, filename }, 'Avatar Uploaded');
+        } else if (fallbackUrl) {
+            await prisma.host.update({ where: { id: user.userId }, data: { avatarUrl: fallbackUrl } });
+        }
+    } catch(e: any) {
+        logger.error({ err: e, userId: user.userId }, 'Avatar Upload Failed');
+        throw e;
     }
     revalidatePath(`/${user.username}/profile`);
     revalidatePath(`/${user.username}`);
@@ -323,6 +325,7 @@ export async function createDemoSession() {
         guestsData.push({ voteSessionId: voteId, username: `Guest_${i+1}`, password: Math.floor(1000 + Math.random() * 9000).toString() });
     }
     await prisma.guestAccount.createMany({ data: guestsData });
+    logger.info({ userId: user.id }, 'Demo Session Created');
     redirect(`/${user.username}/${voteId}`);
 }
 
@@ -361,6 +364,7 @@ export async function saveYoutubeCredentials(formData: FormData) {
     const apiKey = formData.get('youtubeApiKey') as string;
     if (!apiKey) throw new Error("API Key required");
     await prisma.host.update({ where: { id: user.userId }, data: { youtubeApiKey: encrypt(apiKey) } });
+    logger.info({ userId: user.userId }, 'YouTube Key Updated');
     revalidatePath(`/${user.username}/settings`);
 }
 
@@ -384,6 +388,9 @@ export async function bulkImportSongs(formData: FormData) {
     const lines = rawText.split(/\r?\n/).filter(line => line.trim().length > 0);
     const limit = 50; 
     const tracksToProcess = lines.slice(0, limit);
+    
+    logger.info({ userId: user.userId, collectionId, count: tracksToProcess.length }, 'Bulk Import Started');
+
     for (const line of tracksToProcess) {
         try {
             const query = line.trim();
@@ -393,7 +400,9 @@ export async function bulkImportSongs(formData: FormData) {
                 await prisma.song.upsert({ where: { id: track.id }, update: {}, create: { id: track.id, title: track.title, artist: track.artist, album: 'Imported', albumArtUrl: track.albumArtUrl, durationMs: track.durationMs || 0 } });
                 await prisma.collectionItem.create({ data: { collectionId, songId: track.id } }).catch(() => {}); 
             }
-        } catch (e) { console.error(`Failed to import: ${line}`, e); }
+        } catch (e) { 
+            logger.warn({ userId: user.userId, line, err: e }, 'Bulk Import Item Failed');
+        }
     }
     if (sessionId) { revalidatePath(`/${user.username}/${sessionId}/settings`); }
 }
@@ -404,6 +413,7 @@ export async function createSession(formData: FormData) {
     const title = formData.get('title') as string || 'New Session';
     const voteId = generateVoteId();
     await prisma.voteSession.create({ data: { id: voteId, hostId: user.userId, title: title, isActive: true, votesPerUser: 5, requireVerification: false } });
+    logger.info({ userId: user.userId, sessionId: voteId }, 'Session Created');
     revalidatePath(`/${user.username}`);
     redirect(`/${user.username}/${voteId}`);
 }
@@ -418,6 +428,7 @@ export async function deleteSession(formData: FormData) {
         await prisma.guestAccount.deleteMany({ where: { voteSessionId: sessionId } });
         await prisma.sessionSettings.deleteMany({ where: { voteSessionId: sessionId } });
         await prisma.voteSession.delete({ where: { id: sessionId } });
+        logger.info({ userId: user.userId, sessionId }, 'Session Deleted');
     }
     revalidatePath(`/${user.username}`);
 }
@@ -449,6 +460,7 @@ export async function updateSessionRules(formData: FormData) {
     data: { requireVerification, votesPerUser, cycleDelay, startTime, endTime, backupPlaylistId: cleanedPlaylistId, backupCollectionId: backupCollectionId || null, autoAddToCollectionId: autoAddToCollectionId || null, enableReactions, enableDuplicateCheck, enableRegionCheck }
   });
   if (cleanedPlaylistId) { await redis.del(`radio_playlist:${cleanedPlaylistId}`); }
+  logger.info({ userId: user.userId, sessionId }, 'Session Rules Updated');
   revalidatePath(`/${user.username}/${sessionId}/settings`);
 }
 
@@ -466,6 +478,7 @@ export async function generateGuests(formData: FormData) {
      guestsData.push({ voteSessionId: sessionId, username: randomName, password: randomPass });
   }
   await prisma.guestAccount.createMany({ data: guestsData });
+  logger.info({ userId: user.userId, sessionId, count }, 'Guest Accounts Generated');
   revalidatePath(`/${user.username}/${sessionId}/settings`);
 }
 
@@ -487,9 +500,13 @@ export async function loginGuest(formData: FormData) {
     where: { username: { equals: username, mode: 'insensitive' }, password: password },
     include: { voteSession: { include: { host: true } } }
   });
-  if (!guest) redirect('/join?error=Invalid credentials');
+  if (!guest) {
+      logger.warn({ username, type: 'guest_login_fail' }, 'Invalid Guest Creds');
+      redirect('/join?error=Invalid credentials');
+  }
   if (guest.isBanned) redirect('/join?error=Access denied');
   cookies().set('guest_id', guest.id, { httpOnly: false, path: '/', maxAge: 60 * 60 * 24 });
+  logger.info({ guestId: guest.id, sessionId: guest.voteSessionId }, 'Guest Logged In');
   redirect(`/${guest.voteSession.host.username}/${guest.voteSession.id}`);
 }
 
@@ -575,6 +592,7 @@ export async function updateGuestPermissions(guestId: string, permissions: Parti
     const current = (guest.permissions as unknown as Permissions) || {};
     const updated = { ...current, ...permissions };
     await prisma.guestAccount.update({ where: { id: guestId }, data: { permissions: updated as any } });
+    logger.info({ userId: user.userId, guestId, permissions }, 'Guest Permissions Updated');
     revalidatePath(`/${user.username}/${session.id}/settings`);
 }
 
@@ -634,6 +652,7 @@ export async function toggleHostBan(hostId: string, reason?: string) {
     if (host) {
         const newBanStatus = !host.isBanned;
         await prisma.host.update({ where: { id: hostId }, data: { isBanned: newBanStatus, banReason: newBanStatus ? reason : null } });
+        logger.warn({ adminId: user.userId, targetHostId: hostId, action: newBanStatus ? 'BAN' : 'UNBAN', reason }, 'Host Ban Toggled');
         revalidatePath('/admin');
     }
 }
@@ -642,6 +661,7 @@ export async function softDeleteHost(hostId: string, reason?: string) {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
     await prisma.host.update({ where: { id: hostId }, data: { deletedAt: new Date(), banReason: reason } });
+    logger.warn({ adminId: user.userId, targetHostId: hostId, reason }, 'Host Soft Deleted');
     revalidatePath('/admin');
 }
 
@@ -649,6 +669,7 @@ export async function restoreHost(hostId: string) {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
     await prisma.host.update({ where: { id: hostId }, data: { deletedAt: null, banReason: null } });
+    logger.info({ adminId: user.userId, targetHostId: hostId }, 'Host Restored');
     revalidatePath('/admin');
 }
 
@@ -661,6 +682,7 @@ export async function sendGlobalAnnouncement(message: string, type: 'info' | 'wa
     const payload = { message, type, timestamp: Date.now() };
     await redis.set(ANNOUNCEMENT_KEY, JSON.stringify(payload));
     await redis.publish('global_announcements', JSON.stringify(payload));
+    logger.info({ adminId: user.userId, message }, 'Global Announcement Sent');
     revalidatePath('/');
 }
 

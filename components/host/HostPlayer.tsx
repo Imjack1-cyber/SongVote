@@ -8,8 +8,12 @@ import {
 import { useState, useEffect, memo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useSocket } from '@/hooks/useSocket';
+import { clientLogger } from '@/lib/clientLogger';
 
-const YouTube = dynamic(() => import('react-youtube'), { ssr: false }) as any;
+const YouTube = dynamic<any>(
+    () => import('react-youtube').then((mod) => mod.default), 
+    { ssr: false }
+);
 
 interface Song {
     id: string;
@@ -37,6 +41,7 @@ const HostPlayer = memo(function HostPlayer(props: HostPlayerProps) {
 
   const handleHardReset = () => {
       if(confirm("Restart player?")) {
+          clientLogger.info("Host Player Hard Reset Triggered", { voteId: props.voteId });
           setRemountKey(prev => prev + 1);
       }
   };
@@ -102,6 +107,7 @@ function InternalPlayer({
               setIsPlaying(true);
               if (Math.abs(player.getCurrentTime() - target) > 2) {
                   player.seekTo(target, true);
+                  clientLogger.debug('Player Sync Correction', { voteId, drift: Math.abs(player.getCurrentTime() - target) });
               }
               if (player.getPlayerState() !== 1) player.playVideo();
           } else {
@@ -160,6 +166,7 @@ function InternalPlayer({
   };
 
   const onStateChange = (event: any) => {
+    // 1 = Playing, 2 = Paused
     if (event.data === 1) {
         setIsPlaying(true);
         broadcastStatus('playing');
@@ -171,6 +178,9 @@ function InternalPlayer({
   };
 
   const onError = (event: any) => {
+      // 100 = Not Found, 101/150 = Embedding Disabled
+      clientLogger.error('YouTube Player Error', { errorCode: event.data, videoId: currentSong?.songId, voteId });
+      
       if ([100, 101, 150].includes(event.data)) {
           setError("Video unavailable. Skipping...");
           setTimeout(() => handleSkip(), 3000);
@@ -179,7 +189,12 @@ function InternalPlayer({
       }
   };
 
-  const handleSkip = () => { if (currentSong) onSongEnded(currentSong.id); };
+  const handleSkip = () => { 
+      if (currentSong) {
+          clientLogger.info('Host Skipped Song', { voteId, songId: currentSong.songId });
+          onSongEnded(currentSong.id); 
+      }
+  };
   
   const handlePrevious = () => {
       if (player && typeof player.getCurrentTime === 'function' && player.getCurrentTime() > 3) {
@@ -214,6 +229,7 @@ function InternalPlayer({
   const handleForceSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       if (!forceUrl.trim()) return;
+      clientLogger.info('Host Initiated Force Play', { voteId, url: forceUrl });
       onForcePlay(forceUrl);
       setForceUrl('');
       setShowForceInput(false);

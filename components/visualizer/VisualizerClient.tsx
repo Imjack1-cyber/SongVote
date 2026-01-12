@@ -6,6 +6,7 @@ import QRCode from 'react-qr-code';
 import Image from 'next/image';
 import { Music2, Maximize, Minimize } from 'lucide-react';
 import ReactionOverlay from '@/components/host/ReactionOverlay';
+import { clientLogger } from '@/lib/clientLogger';
 
 interface VisualizerProps {
   voteId: string;
@@ -19,17 +20,29 @@ interface VisualizerProps {
 export default function VisualizerClient({ 
     voteId, initialQueue, initialCurrent, sessionTitle, hostname, enableReactions 
 }: VisualizerProps) {
-  const { socket } = useSocket(voteId);
+  const { socket, isConnected } = useSocket(voteId);
   const [queue, setQueue] = useState(initialQueue);
   const [currentSong, setCurrentSong] = useState(initialCurrent);
   const [joinUrl, setJoinUrl] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
+      // Log initialization
+      clientLogger.info('Visualizer Mounted', { voteId, hostname });
+      
       if (typeof window !== 'undefined') {
           setJoinUrl(`${window.location.origin}/join`);
       }
-  }, []);
+  }, [voteId, hostname]);
+
+  // Monitor connection health specifically for visualizer
+  useEffect(() => {
+      if (!isConnected) {
+          clientLogger.warn('Visualizer Disconnected', { voteId });
+      } else {
+          clientLogger.info('Visualizer Connected', { voteId });
+      }
+  }, [isConnected, voteId]);
 
   // --- FULL SCREEN LOGIC ---
   const toggleFullScreen = useCallback(() => {
@@ -47,6 +60,7 @@ export default function VisualizerClient({
   useEffect(() => {
     const handleFsChange = () => {
         setIsFullscreen(!!document.fullscreenElement);
+        clientLogger.debug('Visualizer Fullscreen Toggle', { isFullscreen: !!document.fullscreenElement });
     };
     document.addEventListener('fullscreenchange', handleFsChange);
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
@@ -58,6 +72,16 @@ export default function VisualizerClient({
     
     socket.on('state-update', ({ queue, current }) => {
         setQueue(queue.slice(0, 5)); 
+        
+        // Log song changes in visualizer to track display accuracy
+        if (current?.id !== currentSong?.id) {
+            clientLogger.info('Visualizer Track Change', { 
+                previousId: currentSong?.id, 
+                newId: current?.id,
+                title: current?.song?.title
+            });
+        }
+        
         setCurrentSong(current);
     });
 
@@ -66,7 +90,7 @@ export default function VisualizerClient({
     return () => { 
         socket.off('state-update'); 
     };
-  }, [socket, voteId]);
+  }, [socket, voteId, currentSong]);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col overflow-hidden font-sans relative selection:bg-[var(--accent)] selection:text-white">

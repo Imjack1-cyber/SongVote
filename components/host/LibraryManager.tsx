@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Library, Plus, Upload, Loader2, Music } from 'lucide-react';
 import { createCollection, bulkImportSongs } from '@/app/actions';
 import { toast } from 'sonner';
+import { clientLogger } from '@/lib/clientLogger';
 
 interface Collection {
     id: string;
@@ -22,12 +23,19 @@ export default function LibraryManager({ collections, sessionId }: LibraryManage
 
     const handleImport = async (formData: FormData) => {
         setImporting(true);
+        const rawText = formData.get('rawText') as string;
+        const lineCount = rawText ? rawText.split('\n').length : 0;
+        
+        clientLogger.info('Host Bulk Import Initiated', { lineCount, sessionId });
+
         try {
             await bulkImportSongs(formData);
             toast.success("Import processing complete");
+            clientLogger.info('Host Bulk Import Success', { sessionId });
             setMode('create');
         } catch (e) {
             toast.error("Import failed");
+            clientLogger.error('Host Bulk Import Failed', { error: e, sessionId });
         } finally {
             setImporting(false);
         }

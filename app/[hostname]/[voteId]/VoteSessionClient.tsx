@@ -14,6 +14,7 @@ import ReactionOverlay from '@/components/host/ReactionOverlay';
 import LiveHelpBubble from '@/components/support/LiveHelpBubble';
 import HostChatManager from '@/components/support/HostChatManager';
 import { toast } from 'sonner';
+import { clientLogger } from '@/lib/clientLogger';
 
 interface VoteSessionClientProps {
   hostName: string;
@@ -83,6 +84,7 @@ export default function VoteSessionClient({
         if (submittedIds.size > 0 && initialTimeLeft > 0 && cycleDelayMinutes > 0) {
              setSubmittedIds(new Set());
              toast.info("New voting round started!");
+             clientLogger.info('Client Round Reset', { voteId, voterId });
         }
         return;
     }
@@ -98,12 +100,13 @@ export default function VoteSessionClient({
         });
     }, 1000);
     return () => clearInterval(interval);
-  }, [timeLeft, initialTimeLeft, cycleDelayMinutes, submittedIds.size]);
+  }, [timeLeft, initialTimeLeft, cycleDelayMinutes, submittedIds.size, voteId, voterId]);
 
   useEffect(() => {
     if (!socket) return;
 
     socket.on('state-update', ({ queue, current, playbackState }: any) => {
+        clientLogger.debug('Socket State Update Received', { voteId, queueLength: queue.length, currentId: current?.id });
         setQueue(queue);
         setCurrentSong((prev: any) => {
             if (prev && current && prev.id !== current.id) setHistory(h => [prev, ...h]);
@@ -124,6 +127,7 @@ export default function VoteSessionClient({
         setSelectedIds(new Set());
         if (cooldownSeconds > 0) setTimeLeft(cooldownSeconds);
         toast.success("Votes submitted!");
+        clientLogger.info('Votes Submitted Successfully', { voteId, count: confirmedIds.length });
     });
     
     socket.on('session-cleared', () => {
@@ -132,6 +136,7 @@ export default function VoteSessionClient({
         setHistory([]);
         setPlaybackState(null);
         toast.info("Host cleared all session data.");
+        clientLogger.info('Session Cleared Event Received', { voteId });
     });
 
     socket.on('timer-reset', ({ targetUserId }: { targetUserId: string | null }) => {
@@ -143,7 +148,10 @@ export default function VoteSessionClient({
         }
     });
 
-    socket.on('error', (msg: string) => toast.error(msg));
+    socket.on('error', (msg: string) => {
+        toast.error(msg);
+        clientLogger.error('Socket Server Error', { message: msg, voteId });
+    });
 
     if (isHost && isConnected) {
         socket.emit('join-host-room', voteId);
@@ -188,6 +196,7 @@ export default function VoteSessionClient({
 
   const handleSongStarted = useCallback((queueItemId: string) => {
       if (!socket) return;
+      clientLogger.info('Host Started Song', { voteId, queueItemId });
       const songToStart = queue.find(item => item.id === queueItemId);
       if (songToStart) {
           setCurrentSong(songToStart);
@@ -198,6 +207,7 @@ export default function VoteSessionClient({
 
   const handleSongEnded = useCallback((queueItemId: string) => {
       if (!socket) return;
+      clientLogger.info('Host Ended Song', { voteId, queueItemId });
       const nextSong = queue.length > 0 ? queue[0] : null;
       const nextId = nextSong ? nextSong.id : null;
       if (currentSong) setHistory(h => [currentSong, ...h]);
@@ -222,7 +232,10 @@ export default function VoteSessionClient({
           } else {
               toast.error("Video not found.");
           }
-      } catch (e) { toast.error("Error processing URL."); }
+      } catch (e) { 
+          toast.error("Error processing URL."); 
+          clientLogger.error('Force Play Search Error', { error: e });
+      }
   };
 
   const handleRemoveSong = (itemId: string) => {
@@ -325,7 +338,7 @@ export default function VoteSessionClient({
                     <ShieldAlert className="w-4 h-4" /> Remote Control
                 </div>
                 <div className="flex gap-4">
-                   <button onClick={() => socket.emit('player-update', { sessionId: voteId, state: { status: 'paused', videoId: currentSong.songId, position: 0 }, voterId })}>
+                   <button onClick={() => socket?.emit('player-update', { sessionId: voteId, state: { status: 'paused', videoId: currentSong.songId, position: 0 }, voterId })}>
                        <Pause className="w-5 h-5" />
                    </button>
                    <button onClick={() => handleSongEnded(currentSong.id)}>

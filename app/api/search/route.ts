@@ -4,6 +4,7 @@ import { searchYouTube, YouTubeSearchResult } from '@/lib/youtube';
 import { redis } from '@/lib/redis';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { z } from 'zod';
+import { logger } from '@/lib/logger';
 
 // Validation Schema for Search
 const SearchQuerySchema = z.object({
@@ -13,6 +14,7 @@ const SearchQuerySchema = z.object({
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+  const start = Date.now();
   
   // 1. Input Validation
   const input = SearchQuerySchema.safeParse({
@@ -26,23 +28,25 @@ export async function GET(req: NextRequest) {
 
   const { q: query, host: hostName } = input.data;
 
-  // 2. Robust IP Extraction (Handling Proxy Chains)
-  // X-Forwarded-For can be "client, proxy1, proxy2". We want the first one.
+  // 2. Robust IP Extraction
   const forwardedFor = req.headers.get('x-forwarded-for');
   const ip = forwardedFor ? forwardedFor.split(',')[0].trim() : 'unknown';
   
   // 3. Rate Limiting
-  // 20 searches per minute per IP
   const limitKey = `search:${ip}`;
   const isAllowed = await checkRateLimit(limitKey, 20, 60);
   
   if (!isAllowed) {
+      logger.warn({ ip, hostName, query }, 'Search Rate Limit Exceeded');
       return NextResponse.json({ error: 'Too many search requests. Please wait.' }, { status: 429 });
   }
 
   try {
     const host = await prisma.host.findUnique({ where: { username: hostName } });
-    if (!host) return NextResponse.json({ error: 'Host not found' }, { status: 404 });
+    if (!host) {
+        logger.warn({ hostName, ip }, 'Search attempted for non-existent host');
+        return NextResponse.json({ error: 'Host not found' }, { status: 404 });
+    }
 
     const normalizedQuery = query.trim();
     
@@ -62,19 +66,21 @@ export async function GET(req: NextRequest) {
     const cachedApiJson = await redis.get(redisKey);
     
     let apiResults: YouTubeSearchResult[] = [];
+    let source = 'db_only';
 
     if (cachedApiJson) {
         apiResults = JSON.parse(cachedApiJson);
+        source = 'cache';
     } 
     else {
         // 6. YouTube API Fetch
         try {
             apiResults = await searchYouTube(normalizedQuery, host.id);
+            source = 'api';
             
             // Persist valid results
             if (apiResults.length > 0) {
                 await redis.set(redisKey, JSON.stringify(apiResults));
-                // Cache search results for 7 days
                 await redis.expire(redisKey, 60 * 60 * 24 * 7);
 
                 const upsertPromises = apiResults.map(track => {
@@ -95,9 +101,7 @@ export async function GET(req: NextRequest) {
                 await Promise.all(upsertPromises);
             }
         } catch (e) {
-            console.error("YouTube Search Failed:", e);
-            // Don't fail the whole request if YT fails, just return DB results
-        }
+       }
     }
 
     // 7. Merge Results
@@ -111,10 +115,20 @@ export async function GET(req: NextRequest) {
         }
     });
 
+    const duration = Date.now() - start;
+    logger.info({ 
+        type: 'search_req', 
+        hostName, 
+        query: normalizedQuery, 
+        source, 
+        resultCount: combined.length,
+        duration
+    }, 'Search Request Completed');
+
     return NextResponse.json({ tracks: { items: combined } });
 
   } catch (error) {
-    console.error('Search handler error:', error);
+    logger.error({ err: error, hostName, query }, 'Search Route Handler Error');
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

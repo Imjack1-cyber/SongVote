@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { decrypt } from './crypto';
+import { logger } from './logger';
 
 export interface YouTubeSearchResult {
   id: string;
@@ -18,6 +19,8 @@ export interface YouTubeSearchResult {
  * @param checkRegion If true, performs strict region/embeddable checks (Cost: 1 extra unit per video)
  */
 export async function searchYouTube(query: string, hostId: string, checkRegion: boolean = false): Promise<YouTubeSearchResult[]> {
+  const startTime = Date.now();
+  
   // 1. Get Host Key
   const host = await prisma.host.findUnique({
     where: { id: hostId },
@@ -25,6 +28,7 @@ export async function searchYouTube(query: string, hostId: string, checkRegion: 
   });
 
   if (!host || !host.youtubeApiKey) {
+    logger.warn({ hostId }, 'YouTube API Key missing during search');
     throw new Error('YouTube API Key not configured');
   }
 
@@ -36,39 +40,56 @@ export async function searchYouTube(query: string, hostId: string, checkRegion: 
   let data;
   let isVideoLookup = false;
 
-  // We need contentDetails to check region restriction
   const parts = checkRegion ? 'snippet,contentDetails,status' : 'snippet';
 
-  if (match && match[1]) {
-      // Direct Link Strategy
-      const videoId = match[1];
-      const VIDEO_ENDPOINT = 'https://www.googleapis.com/youtube/v3/videos';
-      const params = new URLSearchParams({
-        part: parts,
-        id: videoId,
-        key: decryptedKey
-      });
-      const res = await fetch(`${VIDEO_ENDPOINT}?${params.toString()}`);
-      data = await res.json();
-      isVideoLookup = true;
-  } else {
-      // Search Strategy
-      const SEARCH_ENDPOINT = 'https://www.googleapis.com/youtube/v3/search';
-      const params = new URLSearchParams({
-        part: 'snippet',
-        maxResults: '10',
-        key: decryptedKey,
-        type: 'video',
-        q: query
-      });
-      const res = await fetch(`${SEARCH_ENDPOINT}?${params.toString()}`);
-      data = await res.json();
+  try {
+      if (match && match[1]) {
+          // Direct Link Strategy
+          const videoId = match[1];
+          const VIDEO_ENDPOINT = 'https://www.googleapis.com/youtube/v3/videos';
+          const params = new URLSearchParams({
+            part: parts,
+            id: videoId,
+            key: decryptedKey
+          });
+          const res = await fetch(`${VIDEO_ENDPOINT}?${params.toString()}`);
+          data = await res.json();
+          isVideoLookup = true;
+      } else {
+          // Search Strategy
+          const SEARCH_ENDPOINT = 'https://www.googleapis.com/youtube/v3/search';
+          const params = new URLSearchParams({
+            part: 'snippet',
+            maxResults: '10',
+            key: decryptedKey,
+            type: 'video',
+            q: query
+          });
+          const res = await fetch(`${SEARCH_ENDPOINT}?${params.toString()}`);
+          data = await res.json();
+      }
+
+      const duration = Date.now() - startTime;
       
-      // If we need to check regions for SEARCH results, we must do a second call 
-      // because 'search' endpoint doesn't return contentDetails.
-      // However, to save quota, we only do strict checks on Direct Link or when playing.
-      // For search results, we assume they are generally available.
-      // We will perform a basic mapping here.
+      if (data.error) {
+          logger.error({ 
+              err: data.error, 
+              hostId, 
+              query,
+              duration
+          }, 'YouTube API Error Response');
+          return [];
+      }
+
+      logger.info({ 
+          type: isVideoLookup ? 'direct_lookup' : 'search',
+          resultsCount: data.items?.length || 0,
+          duration
+      }, 'YouTube API Call');
+
+  } catch (e) {
+      logger.error({ err: e, hostId, query }, 'YouTube Fetch Failed');
+      return [];
   }
 
   if (!data.items) return [];
@@ -89,12 +110,9 @@ export async function searchYouTube(query: string, hostId: string, checkRegion: 
           // 2. Check Region Restriction
           if (item.contentDetails && item.contentDetails.regionRestriction) {
               const restriction = item.contentDetails.regionRestriction;
-              // If 'allowed' list exists, US must be in it (assuming Host is US-based or generic)
-              // Ideally, this should be configurable, but 'US' is a safe default for most global tracks.
               if (restriction.allowed && !restriction.allowed.includes('US')) {
                   isPlayable = false;
               }
-              // If 'blocked' list exists, US must NOT be in it
               if (restriction.blocked && restriction.blocked.includes('US')) {
                   isPlayable = false;
               }
@@ -150,7 +168,7 @@ export async function getPlaylistItems(playlistId: string, hostId: string): Prom
           };
       }).filter(Boolean);
   } catch (e) {
-      console.error("Playlist Fetch Error", e);
+      logger.error({ err: e, playlistId }, "Playlist Fetch Error");
       return [];
   }
 }

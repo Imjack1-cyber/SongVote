@@ -1,7 +1,7 @@
 ﻿{
     "SourceDirectory":  "C:\\dev\\eclipse\\workspace\\SongVote",
     "OutputFile":  "songvote.txt",
-    "MaxFileSizeKB":  400,
+    "MaxFileSizeKB":  450,
     "ExcludedDirectories":  [
                                 "C:\\dev\\eclipse\\workspace\\SongVote\\node_modules",
                                 "C:\\dev\\eclipse\\workspace\\SongVote\\.next",

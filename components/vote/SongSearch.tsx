@@ -5,6 +5,7 @@ import { Search, Plus, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Spinner } from '@/components/ui/Loaders';
+import { clientLogger } from '@/lib/clientLogger';
 
 // Simple entity decoder
 const decodeHtmlEntities = (str: string) => {
@@ -37,6 +38,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
     e.preventDefault();
     if (!query.trim()) return;
 
+    const start = Date.now();
     setLoading(true);
     setResults([]); 
     setHasSearched(true);
@@ -45,14 +47,27 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&host=${hostName}`);
       const data = await res.json();
       
+      const duration = Date.now() - start;
+
       if (data.tracks && data.tracks.items) {
         setResults(data.tracks.items);
+        clientLogger.debug('Client Search Success', { query, results: data.tracks.items.length, duration });
+      } else {
+        clientLogger.warn('Client Search No Results', { query, duration });
       }
     } catch (err) {
-      console.error(err);
+      clientLogger.error('Client Search Error', { error: err, query });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSuggestClick = (track: Song) => {
+      clientLogger.info('User Selected Song', { songId: track.id, title: track.title });
+      onSuggest(track);
+      setResults([]);
+      setQuery('');
+      setHasSearched(false);
   };
 
   return (
@@ -121,12 +136,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
                 </div>
               </div>
               <button 
-                onClick={() => {
-                    onSuggest(track);
-                    setResults([]);
-                    setQuery('');
-                    setHasSearched(false);
-                }}
+                onClick={() => handleSuggestClick(track)}
                 className="p-2 flex-shrink-0 rounded-full hover:bg-[var(--accent)] hover:text-white text-[var(--accent)] transition-colors"
                 title="Add to Queue"
               >

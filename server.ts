@@ -11,13 +11,14 @@ import { z } from 'zod';
 import * as cookie from 'cookie';
 import { jwtVerify } from 'jose';
 import { getPlaylistItems, searchYouTube, YouTubeSearchResult } from './lib/youtube';
+import { logger } from './lib/logger';
 
 const prisma = new PrismaClient();
 
 // Handle Redis connection errors gracefully
 redis.on('error', (err) => {
     if ((err as any).code !== 'ECONNREFUSED') {
-        console.error('Redis Client Error', err);
+        logger.error({ err, source: 'redis_client' }, 'Redis Client Error');
     }
 });
 
@@ -27,9 +28,9 @@ const redisSub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 // Subscribing to ticket_updates channel
 redisSub.subscribe('global_announcements', 'admin_channel', 'ticket_updates', (err) => {
     if (err) {
-        console.error('[SERVER] Failed to subscribe to channels:', err);
+        logger.error({ err, source: 'redis_sub' }, 'Failed to subscribe to channels');
     } else {
-        console.log('[SERVER] Redis Subscribed to: global_announcements, admin_channel, ticket_updates');
+        logger.info({ source: 'redis_sub', channels: ['global_announcements', 'admin_channel', 'ticket_updates'] }, 'Redis Subscribed');
     }
 });
 
@@ -142,13 +143,14 @@ const handleAutoAdd = async (sessionId: string, songId: string) => {
         if (session && session.autoAddToCollectionId) {
             await prisma.collectionItem.create({
                 data: { collectionId: session.autoAddToCollectionId, songId: songId }
-            }).catch((err) => { if (err.code !== 'P2002') console.error("Auto-Add Error", err); });
+            }).catch((err) => { if (err.code !== 'P2002') logger.error({ err, sessionId, songId }, "Auto-Add Error"); });
         }
-    } catch (e) { console.error("Auto-Add Context Error", e); }
+    } catch (e) { logger.error({ err: e, sessionId, songId }, "Auto-Add Context Error"); }
 };
 
 // --- SMART RADIO LOGIC ---
 const playRadioSong = async (sessionId: string) => {
+    logger.info({ sessionId }, 'Attempting Radio Play');
     const queueCount = await prisma.queueItem.count({
         where: { voteSessionId: sessionId, status: 'LIVE' }
     });
@@ -186,7 +188,7 @@ const playRadioSong = async (sessionId: string) => {
                     await redis.set(cacheKey, JSON.stringify(playlistItems));
                     await redis.expire(cacheKey, 60 * 60 * 24); 
                 }
-            } catch (e) { console.error("Radio Playlist Fetch Failed", e); }
+            } catch (e) { logger.error({ err: e, sessionId }, "Radio Playlist Fetch Failed"); }
         }
         if (playlistItems.length > 0) {
             const lastPlayed = await prisma.queueItem.findFirst({
@@ -232,6 +234,7 @@ const playRadioSong = async (sessionId: string) => {
     const radioItem = await prisma.queueItem.create({
         data: { voteSessionId: sessionId, songId: selectedSong.id, status: 'PLAYING', voteCount: 0, suggestedByGuestId: null, isRadio: true }
     });
+    logger.info({ sessionId, songId: selectedSong.id }, 'Radio Song Started');
     return radioItem.id;
 };
 
@@ -251,12 +254,26 @@ const broadcastState = async (io: Server, sessionId: string) => {
 
 app.prepare().then(() => {
   const httpServer = createServer(async (req, res) => {
+    const start = Date.now();
     try {
         const parsedUrl = parse(req.url!, true);
         await handle(req, res, parsedUrl);
+        
+        // --- LOG SUCCESSFUL REQUEST ---
+        const duration = Date.now() - start;
+        // Ignore static assets/next-internals to keep logs clean in prod
+        if (!req.url?.startsWith('/_next') && !req.url?.startsWith('/favicon')) {
+            logger.info({ 
+                method: req.method, 
+                url: req.url, 
+                statusCode: res.statusCode, 
+                duration 
+            }, 'HTTP Request');
+        }
+
     } catch (err) {
         if ((err as any).code === 'ECONNRESET' || (err as any).message === 'aborted') return;
-        console.error('Error handling request:', err);
+        logger.error({ err, url: req.url }, 'Error handling HTTP request');
     }
   });
 
@@ -269,8 +286,8 @@ app.prepare().then(() => {
   // --- PUB/SUB DISPATCHER ---
   redisSub.on('message', (channel, message) => {
     try {
-        console.log(`[DEBUG] Redis Message on ${channel}:`, message.substring(0, 100));
         const data = JSON.parse(message);
+        logger.debug({ channel, type: data.type }, 'Redis Pub/Sub Message Received');
         
         if (channel === 'global_announcements') {
             io.emit('global-announcement', data);
@@ -280,50 +297,50 @@ app.prepare().then(() => {
             io.to('admin-room').emit('admin-update', data);
         }
         else if (channel === 'ticket_updates') {
-            console.log('[DEBUG] Processing ticket_updates logic...');
             
             // 1. Live Chat Room Update
             if (data.ticketId) {
-                console.log(`[DEBUG] Forwarding to room ticket:${data.ticketId}`);
                 io.to(`ticket:${data.ticketId}`).emit('ticket-update', data);
             }
 
             // 2. Admin Notification
             if (data.notifyAdmin) {
-                console.log('[DEBUG] Forwarding to admin-room as admin-notification');
                 io.to('admin-room').emit('admin-notification', data);
             }
             
             // 3. User Notification
             if (data.notifyUser && data.targetUserId) {
-                console.log(`[DEBUG] Forwarding to user:${data.targetUserId}`);
                 io.to(`user:${data.targetUserId}`).emit('ticket-notification', data);
             }
         }
     } catch (e) {
-        console.error("Redis Pub/Sub Error", e);
+        logger.error({ err: e, channel, message }, "Redis Pub/Sub Dispatch Error");
     }
   });
 
   io.on('connection', async (socket) => {
     redis.incr('system:active_connections');
+    
+    // Log connection with ID
+    logger.info({ socketId: socket.id, ip: socket.handshake.address }, 'Socket Connected');
 
     // --- AUTO-JOIN ROOMS BASED ON AUTH ---
     const userId = await getUserIdFromSocket(socket);
     if (userId) {
         // 1. Join Personal Room
         socket.join(`user:${userId}`);
-        console.log(`[DEBUG] Socket ${socket.id} joined user:${userId}`);
+        logger.debug({ socketId: socket.id, userId }, 'User Authenticated & Joined Personal Room');
 
         // 2. Auto-Join Admin Room if SuperAdmin
         if (userId === process.env.SUPER_ADMIN_ID) {
             socket.join('admin-room');
-            console.log(`[DEBUG] Socket ${socket.id} (SuperAdmin) joined admin-room`);
+            logger.info({ socketId: socket.id, userId }, 'SuperAdmin Joined Admin Room');
         }
     }
 
     socket.on('disconnect', () => {
         redis.decr('system:active_connections');
+        logger.debug({ socketId: socket.id }, 'Socket Disconnected');
     });
 
     // --- EXPLICIT TICKET JOIN ---
@@ -331,15 +348,15 @@ app.prepare().then(() => {
         const socketUserId = await getUserIdFromSocket(socket);
         if (!socketUserId) return;
         
-        console.log(`[DEBUG] Socket ${socket.id} joining ticket:${ticketId}`);
         socket.join(`ticket:${ticketId}`);
+        logger.debug({ socketId: socket.id, ticketId }, 'Joined Ticket Room');
     });
 
     // --- JOIN ROOM ---
     socket.on('join-room', async (roomId) => {
       if (typeof roomId !== 'string' || roomId.length > 64) return;
       socket.join(roomId);
-      try { await broadcastState(io, roomId); } catch (e) { console.error(e); }
+      try { await broadcastState(io, roomId); } catch (e) { logger.error({ err: e, roomId }, "Broadcast State Failed"); }
     });
 
     // --- HOST ROOM ---
@@ -358,6 +375,7 @@ app.prepare().then(() => {
       });
       if (session && session.hostId === socketUserId) {
         socket.join(`host-${roomId}`);
+        logger.info({ socketId: socket.id, roomId, userId: socketUserId }, 'Host Joined Session Room');
         try {
             const chats = await prisma.liveChatSession.findMany({
                 where: { voteSessionId: roomId, hasUnreadForHost: true },
@@ -372,7 +390,7 @@ app.prepare().then(() => {
                 orderBy: { createdAt: 'asc' }
             });
             socket.emit('pending-update', pending);
-        } catch (e) { console.error(e); }
+        } catch (e) { logger.error({ err: e, roomId }, "Host Room Init Failed"); }
       }
     });
 
@@ -403,15 +421,26 @@ app.prepare().then(() => {
             if (!chatSession) {
                 chatSession = await prisma.liveChatSession.create({ data: { voteSessionId: sessionId, guestId: validGuestId } });
             }
-            const message = await prisma.liveChatMessage.create({ data: { sessionId: chatSession.id, content, isFromGuest: !isHostReply } });
-            await prisma.liveChatSession.update({ where: { id: chatSession.id }, data: { hasUnreadForHost: !isHostReply, hasUnreadForGuest: isHostReply, updatedAt: new Date() } });
+            const message = await prisma.liveChatSession.update({
+                where: { id: chatSession.id },
+                data: {
+                    hasUnreadForHost: !isHostReply,
+                    hasUnreadForGuest: isHostReply,
+                    updatedAt: new Date(),
+                    messages: {
+                        create: { content, isFromGuest: !isHostReply }
+                    }
+                },
+                select: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } }
+            }).then(r => r.messages[0]);
+
             const roomKey = `live-chat:${sessionId}:${validGuestId}`;
             io.to(roomKey).emit('live-chat-message', message);
             if (!isHostReply) {
                 const guestInfo = await prisma.guestAccount.findUnique({ where: { id: validGuestId }, select: { username: true }});
                 io.to(`host-${sessionId}`).emit('host-chat-alert', { sessionId, guestId: validGuestId, guestName: guestInfo?.username, lastMessage: message, unreadCount: 1 });
             }
-        } catch (e) { console.error("Chat Error", e); }
+        } catch (e) { logger.error({ err: e, sessionId, guestId }, "Chat Error"); }
     });
 
     // ... (Standard Events) ...
@@ -443,7 +472,7 @@ app.prepare().then(() => {
             }
             await setPlaybackState(sessionId, storageState);
             socket.broadcast.to(sessionId).emit('player-sync', storageState);
-        } catch (e) { console.error("Player Sync Error", e); }
+        } catch (e) { logger.error({ err: e, sessionId }, "Player Sync Error"); }
     });
 
     socket.on('suggest-song', async (rawPayload) => {
@@ -497,6 +526,7 @@ app.prepare().then(() => {
         await prisma.queueItem.create({
           data: { voteSessionId: sessionId, songId: songData.id, status: status, suggestedByGuestId: validGuestId, isRadio: false }
         });
+        logger.info({ sessionId, songId: songData.id, suggestedBy }, 'Song Suggested');
         if (status === 'LIVE') {
           await broadcastState(io, sessionId);
         } else {
@@ -507,7 +537,7 @@ app.prepare().then(() => {
             });
             io.to(`host-${sessionId}`).emit('pending-update', pending);
         }
-      } catch (e) { console.error("Suggest Error", e); }
+      } catch (e) { logger.error({ err: e, sessionId, songId: songData.id }, "Suggest Error"); }
     });
 
     socket.on('batch-vote', async (rawPayload) => {
@@ -535,7 +565,7 @@ app.prepare().then(() => {
             if (session.cycleDelay > 0) await redis.setex(cooldownKey, session.cycleDelay * 60, '1');
             await broadcastState(io, sessionId);
             socket.emit('vote-success', { confirmedIds: newVotes, cooldownSeconds: session.cycleDelay * 60 });
-        } catch (e) { console.error("Batch Vote Error", e); } finally { await redis.del(lockKey); }
+        } catch (e) { logger.error({ err: e, sessionId, voterId }, "Batch Vote Error"); } finally { await redis.del(lockKey); }
     });
 
     socket.on('song-transition', async (rawPayload) => {
@@ -563,7 +593,7 @@ app.prepare().then(() => {
                 if(song) await setPlaybackState(sessionId, { status: 'playing', videoId: song.songId, startTime: Date.now(), timestamp: Date.now() });
             } else { await redis.del(`session_playback:${sessionId}`); }
             await broadcastState(io, sessionId);
-        } catch (e) { console.error("Transition Error", e); }
+        } catch (e) { logger.error({ err: e, sessionId }, "Transition Error"); }
     });
 
    socket.on('song-started', async (rawPayload) => {
@@ -582,7 +612,7 @@ app.prepare().then(() => {
             const song = await prisma.queueItem.findUnique({ where: { id: queueItemId }, select: { songId: true }});
             if (song) await setPlaybackState(sessionId, { status: 'playing', videoId: song.songId, startTime: Date.now(), timestamp: Date.now() });
             await broadcastState(io, sessionId);
-        } catch (e) {}
+        } catch (e) { logger.error({ err: e, sessionId }, "Song Start Error"); }
     });
 
     socket.on('song-ended', async (rawPayload) => {
@@ -600,7 +630,7 @@ app.prepare().then(() => {
             }
             await redis.del(`session_playback:${sessionId}`);
             await broadcastState(io, sessionId);
-        } catch (e) {}
+        } catch (e) { logger.error({ err: e, sessionId }, "Song End Error"); }
     });
 
     socket.on('song-back', async (rawPayload) => {
@@ -618,7 +648,7 @@ app.prepare().then(() => {
             await prisma.$transaction(ops);
             await setPlaybackState(sessionId, { status: 'playing', videoId: previous.songId, startTime: Date.now(), timestamp: Date.now() });
             await broadcastState(io, sessionId);
-        } catch (e) {}
+        } catch (e) { logger.error({ err: e, sessionId }, "Song Back Error"); }
     });
 
     socket.on('force-play', async (rawPayload) => {
@@ -635,8 +665,9 @@ app.prepare().then(() => {
             if (existing) { await prisma.queueItem.update({ where: { id: existing.id }, data: { status: 'PLAYING', voteCount: 999 } }); } 
             else { await prisma.queueItem.create({ data: { voteSessionId: sessionId, songId: songData.id, status: 'PLAYING', voteCount: 999, isRadio: false } }); }
             await setPlaybackState(sessionId, { status: 'playing', videoId: songData.id, startTime: Date.now(), timestamp: Date.now() });
+            logger.warn({ sessionId, songId: songData.id, voterId }, 'Force Play Executed');
             await broadcastState(io, sessionId);
-        } catch (e) {}
+        } catch (e) { logger.error({ err: e, sessionId }, "Force Play Error"); }
     });
 
     socket.on('remove-song', async (rawPayload) => {
@@ -644,7 +675,7 @@ app.prepare().then(() => {
         if (!result.success || !result.data.queueItemId) return;
         const { sessionId, queueItemId, voterId } = result.data;
         if (!voterId || !(await checkPermission(sessionId, voterId, 'manageQueue'))) return;
-        try { await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'REJECTED' } }); await broadcastState(io, sessionId); } catch (e) {}
+        try { await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'REJECTED' } }); await broadcastState(io, sessionId); } catch (e) { logger.error({err:e, sessionId}, "Remove Song Error"); }
     });
 
     socket.on('ban-suggester', async (rawPayload) => {
@@ -658,8 +689,9 @@ app.prepare().then(() => {
                 await prisma.guestAccount.update({ where: { id: item.suggestedByGuestId }, data: { isBanned: true } });
                 await prisma.queueItem.update({ where: { id: queueItemId }, data: { status: 'REJECTED' } });
                 await broadcastState(io, sessionId);
+                logger.warn({ sessionId, bannedGuestId: item.suggestedByGuestId, bannedBy: voterId }, 'User Banned from Queue');
             }
-        } catch (e) {}
+        } catch (e) { logger.error({err:e, sessionId}, "Ban Suggester Error"); }
     });
 
     socket.on('admin-reset-timer', async (rawPayload) => {
@@ -680,7 +712,7 @@ app.prepare().then(() => {
                 if (keysToDelete.length > 0) await redis.del(...keysToDelete);
                 io.to(sessionId).emit('timer-reset', { targetUserId: null });
             }
-        } catch (e) {}
+        } catch (e) { logger.error({err:e, sessionId}, "Timer Reset Error"); }
     });
 
     socket.on('clear-session', async (rawPayload) => {
@@ -693,7 +725,8 @@ app.prepare().then(() => {
             await redis.del(`session_playback:${sessionId}`);
             await broadcastState(io, sessionId);
             io.to(sessionId).emit('session-cleared');
-        } catch (e) {}
+            logger.warn({ sessionId, clearedBy: voterId }, 'Session Cleared');
+        } catch (e) { logger.error({err:e, sessionId}, "Clear Session Error"); }
     });
 
     socket.on('approve-song', async (rawPayload) => {
@@ -705,7 +738,7 @@ app.prepare().then(() => {
             await broadcastState(io, sessionId);
             const pending = await prisma.queueItem.findMany({ where: { voteSessionId: sessionId, status: 'PENDING' }, include: { song: true }, orderBy: { createdAt: 'asc' } });
             io.to(`host-${sessionId}`).emit('pending-update', pending);
-        } catch(e) {}
+        } catch(e) { logger.error({err:e, sessionId}, "Approve Song Error"); }
     });
 
     socket.on('reject-song', async (rawPayload) => {
@@ -716,13 +749,13 @@ app.prepare().then(() => {
             await prisma.queueItem.update({ where: { id: itemId }, data: { status: 'REJECTED' } });
             const pending = await prisma.queueItem.findMany({ where: { voteSessionId: sessionId, status: 'PENDING' }, include: { song: true }, orderBy: { createdAt: 'asc' } });
             io.to(`host-${sessionId}`).emit('pending-update', pending);
-        } catch(e) {}
+        } catch(e) { logger.error({err:e, sessionId}, "Reject Song Error"); }
     });
 
     socket.on('disconnect', () => {});
   });
 
   httpServer.listen(port, () => {
-    console.log(`> Ready on http://${hostname}:${port}`);
+    logger.info({ port, hostname }, 'Server Ready');
   });
 });

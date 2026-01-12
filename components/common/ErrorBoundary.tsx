@@ -2,6 +2,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { clientLogger } from '@/lib/clientLogger';
 
 interface Props {
   children?: ReactNode;
@@ -24,7 +25,13 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Uncaught error:', error, errorInfo);
+    // Send crash report to server
+    clientLogger.error('React Error Boundary Caught Crash', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        componentStack: errorInfo.componentStack
+    });
   }
 
   public handleReset = () => {

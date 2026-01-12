@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "ts-node --project tsconfig.server.json server.ts",
+    "dev": "cross-env NODE_ENV=development ts-node --project tsconfig.server.json server.ts",
     "build": "next build",
-    "start": "NODE_ENV=production ts-node --project tsconfig.server.json server.ts",
+    "start": "cross-env NODE_ENV=production ts-node --project tsconfig.server.json server.ts",
     "lint": "next lint",
     "db:push": "prisma db push"
   },
@@ -23,6 +23,8 @@
     "lucide-react": "^0.330.0",
     "next": "14.1.0",
     "nextjs-toploader": "^3.9.17",
+    "pino": "^8.19.0",
+    "pino-pretty": "^10.3.1",
     "react": "^18",
     "react-dom": "^18",
     "react-player": "^3.4.0",
@@ -46,6 +48,7 @@
     "@types/react-youtube": "^7.6.2",
     "@types/tinycolor2": "^1.4.6",
     "autoprefixer": "^10.0.1",
+    "cross-env": "^7.0.3",
     "eslint": "^8",
     "eslint-config-next": "14.1.0",
     "postcss": "^8",
