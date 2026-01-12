@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { Plus, BarChart, Users, Play, Trash2, Calendar } from 'lucide-react';
+import { Plus, BarChart, Users, Play, Trash2, Calendar, LifeBuoy, ArrowRight } from 'lucide-react';
 import { createSession, deleteSession } from '@/app/actions';
 
 export default async function HostOverviewPage({ params }: { params: { hostname: string } }) {
@@ -27,7 +27,7 @@ export default async function HostOverviewPage({ params }: { params: { hostname:
   const activeSession = sessions.find(s => s.isActive);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-20">
       
       {/* Welcome Section */}
       <div id="dashboard-header" className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -53,7 +53,7 @@ export default async function HostOverviewPage({ params }: { params: { hostname:
       </div>
 
       {/* Stats Grid */}
-      <div id="dashboard-stats" className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div id="dashboard-stats" className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="card p-6 flex flex-col justify-between h-32">
           <div className="flex justify-between items-start">
             <span className="text-sm font-medium opacity-60">Total Sessions</span>
@@ -81,6 +81,23 @@ export default async function HostOverviewPage({ params }: { params: { hostname:
             {activeSession ? activeSession.title : 'No Active Session'}
           </span>
         </div>
+
+        {/* Support Card */}
+        <Link 
+            href={`/${params.hostname}/support`}
+            className="card p-6 flex flex-col justify-between h-32 group hover:border-[var(--accent)] transition-all cursor-pointer bg-[var(--surface)] relative overflow-hidden"
+        >
+            <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                <LifeBuoy className="w-20 h-20 -mr-4 -mt-4 transform rotate-12" />
+            </div>
+            <div className="flex justify-between items-start relative z-10">
+                <span className="text-sm font-medium opacity-60 group-hover:opacity-100 transition-opacity">Need Help?</span>
+                <LifeBuoy className="w-5 h-5 text-indigo-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="flex items-center gap-2 text-sm font-bold text-indigo-600 relative z-10">
+                Contact Support <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </div>
+        </Link>
       </div>
 
       {/* Sessions List */}

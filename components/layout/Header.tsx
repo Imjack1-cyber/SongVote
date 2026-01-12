@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { User, Settings, LogOut, LayoutGrid, Music, Moon, Sun } from 'lucide-react';
-import { toggleDarkMode } from '@/app/actions';
+import { User, Settings, LogOut, LayoutGrid, Music, Moon, Sun, LifeBuoy } from 'lucide-react';
+import { toggleDarkMode, getUnreadTicketCount } from '@/app/actions';
+import { useSocket } from '@/hooks/useSocket';
+import { useEffect, useState } from 'react';
 
 interface HeaderProps {
   hostName: string;
@@ -14,10 +16,46 @@ interface HeaderProps {
 export default function Header({ hostName, isLoggedIn, currentUser }: HeaderProps) {
   const pathname = usePathname();
   const isActive = (path: string) => pathname === path;
+  
+  const { socket } = useSocket('global-notifications'); 
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const handleToggle = async () => {
     await toggleDarkMode(hostName);
   };
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    // Initial fetch
+    getUnreadTicketCount().then(setUnreadCount);
+
+    if (!socket) return;
+
+    // Handler for Host Notifications
+    const handleNotification = (data: any) => {
+        console.log('[DEBUG] Header received notification:', data);
+        if (data.type === 'TICKET_REPLY' || data.type === 'TICKET_STATUS') {
+            setUnreadCount(prev => prev + 1);
+        }
+    };
+
+    // Handler for Admin Notifications
+    const handleAdminNotification = (data: any) => {
+        console.log('[DEBUG] Header received ADMIN notification:', data);
+        if (data.type === 'NEW_TICKET' || data.type === 'TICKET_REPLY') {
+            setUnreadCount(prev => prev + 1);
+        }
+    };
+
+    socket.on('ticket-notification', handleNotification);
+    socket.on('admin-notification', handleAdminNotification);
+
+    return () => { 
+        socket.off('ticket-notification', handleNotification);
+        socket.off('admin-notification', handleAdminNotification);
+    };
+  }, [socket, isLoggedIn]);
   
   return (
     <header className="layout-header h-16 transition-colors duration-300">
@@ -33,13 +71,13 @@ export default function Header({ hostName, isLoggedIn, currentUser }: HeaderProp
             </div>
         </Link>
 
-        <nav className="flex items-center gap-2">
+        <nav className="flex items-center gap-1 md:gap-2">
           
           {isLoggedIn && (
             <button 
                 id="theme-toggle"
                 onClick={handleToggle}
-                className="p-2 rounded-lg text-[var(--foreground)] opacity-70 hover:opacity-100 hover:bg-[var(--foreground)]/5 transition-all mr-2"
+                className="p-2 rounded-lg text-[var(--foreground)] opacity-70 hover:opacity-100 hover:bg-[var(--foreground)]/5 transition-all mr-1"
                 title="Toggle Dark Mode"
             >
                 <Sun className="w-5 h-5 hidden dark:block" />
@@ -76,6 +114,26 @@ export default function Header({ hostName, isLoggedIn, currentUser }: HeaderProp
               >
                 <Settings className="w-4 h-4" />
                 <span className="hidden md:inline">Settings</span>
+              </Link>
+
+              <Link 
+                id="nav-support" 
+                href={`/${hostName}/support`} 
+                className={`p-2 md:px-3 md:py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 relative ${
+                  isActive(`/${hostName}/support`) 
+                    ? 'bg-[var(--foreground)]/5 text-[var(--accent)]' 
+                    : 'hover:bg-[var(--foreground)]/5 opacity-70 hover:opacity-100'
+                }`}
+                title="Support"
+                onClick={() => setUnreadCount(0)} // Optimistic clear
+              >
+                <div className="relative">
+                    <LifeBuoy className="w-4 h-4" />
+                    {unreadCount > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-red-500 rounded-full border-2 border-[var(--surface)]" />
+                    )}
+                </div>
+                <span className="hidden md:inline">Help</span>
               </Link>
 
               <Link 

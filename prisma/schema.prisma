@@ -25,6 +25,7 @@ model Host {
   votes        VoteSession[]
   blacklist    Blacklist[]
   collections  SongCollection[]
+  supportTickets SupportTicket[]
 }
 
 model GlobalSettings {
@@ -71,6 +72,9 @@ model VoteSession {
   settings  SessionSettings?
   guests    GuestAccount[]
   queue     QueueItem[]
+  
+  // Live Chat (Guest <-> Host)
+  liveChats LiveChatSession[]
 }
 
 model SessionSettings {
@@ -93,6 +97,9 @@ model GuestAccount {
   karma         Int         @default(0) 
   permissions   Json?
   votes         QueueItem[]
+  
+  // Link to chat
+  liveChat      LiveChatSession?
 }
 
 model Song {
@@ -162,10 +169,60 @@ model SystemFeedback {
   content   String
   type      FeedbackType
   status    FeedbackStatus @default(OPEN)
-  
   userId    String?        
-  
   createdAt DateTime       @default(now())
+}
+
+// --- SUPPORT TICKET SYSTEM (Host <-> Admin) ---
+
+model SupportTicket {
+  id        String   @id @default(uuid())
+  hostId    String
+  host      Host     @relation(fields: [hostId], references: [id])
+  subject   String
+  status    TicketStatus @default(OPEN)
+  priority  TicketPriority @default(NORMAL)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  hasUnreadForHost  Boolean @default(false)
+  hasUnreadForAdmin Boolean @default(true)
+
+  messages  TicketMessage[]
+}
+
+model TicketMessage {
+  id        String   @id @default(uuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId  String   
+  content   String
+  createdAt DateTime @default(now())
+  isAdmin   Boolean  @default(false)
+}
+
+// --- LIVE CHAT SYSTEM (Guest <-> Host) ---
+
+model LiveChatSession {
+  id            String   @id @default(uuid())
+  voteSessionId String
+  voteSession   VoteSession @relation(fields: [voteSessionId], references: [id], onDelete: Cascade)
+  guestId       String   @unique
+  guest         GuestAccount @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  messages      LiveChatMessage[]
+  hasUnreadForHost Boolean @default(false)
+  hasUnreadForGuest Boolean @default(false)
+}
+
+model LiveChatMessage {
+  id            String   @id @default(uuid())
+  sessionId     String
+  session       LiveChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  content       String
+  isFromGuest   Boolean
+  createdAt     DateTime @default(now())
 }
 
 enum QueueStatus {
@@ -191,4 +248,18 @@ enum FeedbackStatus {
   OPEN
   RESOLVED
   ARCHIVED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
 }

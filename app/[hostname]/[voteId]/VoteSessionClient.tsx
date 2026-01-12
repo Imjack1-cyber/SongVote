@@ -11,6 +11,8 @@ import ModerationQueue from '@/components/host/ModerationQueue';
 import HostPlayer from '@/components/host/HostPlayer';
 import QRCodeModal from '@/components/common/QRCodeModal';
 import ReactionOverlay from '@/components/host/ReactionOverlay';
+import LiveHelpBubble from '@/components/support/LiveHelpBubble';
+import HostChatManager from '@/components/support/HostChatManager';
 import { toast } from 'sonner';
 
 interface VoteSessionClientProps {
@@ -263,6 +265,13 @@ export default function VoteSessionClient({
     <div className="max-w-3xl mx-auto space-y-8 pb-32 relative">
       
       {enableReactions && <ReactionOverlay sessionId={voteId} />}
+      
+      {/* Live Support Components */}
+      {isHost ? (
+          <HostChatManager sessionId={voteId} />
+      ) : (
+          voterId && <LiveHelpBubble sessionId={voteId} guestId={voterId} />
+      )}
 
       <div className="flex items-start justify-between">
         <div>

@@ -33,7 +33,6 @@ export default async function HostProfilePage() {
 
         <div id="profile-branding" className="card p-8">
             <h2 className="text-xl font-semibold mb-6 pb-4 border-b border-[var(--border)]">Channel Branding</h2>
-            {/* New Component Handling Uploads */}
             <AvatarUploadForm currentAvatarUrl={host?.avatarUrl || null} />
         </div>
 

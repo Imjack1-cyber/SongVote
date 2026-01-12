@@ -14,65 +14,219 @@ import { searchYouTube } from '@/lib/youtube';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
-// --- SYSTEM FEEDBACK ---
+// --- TICKET SYSTEM ACTIONS ---
+
+export async function createSupportTicket(formData: FormData) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const subject = formData.get('subject') as string;
+    const content = formData.get('content') as string;
+    const priority = formData.get('priority') as 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL';
+
+    if (!subject || !content) throw new Error("Missing fields");
+
+    console.log(`[ACTION] Creating ticket for user ${user.username}`);
+
+    const ticket = await prisma.supportTicket.create({
+        data: {
+            hostId: user.userId,
+            subject,
+            priority: priority || 'NORMAL',
+            hasUnreadForAdmin: true,
+            hasUnreadForHost: false,
+            messages: {
+                create: {
+                    senderId: user.userId,
+                    content,
+                    isAdmin: false
+                }
+            }
+        }
+    });
+
+    const payload = {
+        type: 'NEW_TICKET',
+        data: { id: ticket.id, subject: ticket.subject, host: user.username },
+        notifyAdmin: true 
+    };
+
+    console.log('[ACTION] Publishing NEW_TICKET to ticket_updates:', payload);
+    await redis.publish('ticket_updates', JSON.stringify(payload));
+
+    revalidatePath(`/${user.username}/support`);
+}
+
+export async function replyToTicket(ticketId: string, content: string) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Unauthorized");
+
+    console.log(`[ACTION] User ${user.username} replying to ticket ${ticketId}`);
+
+    const ticket = await prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) throw new Error("Ticket not found");
+
+    const isAdmin = user.userId === process.env.SUPER_ADMIN_ID;
+
+    if (!isAdmin && ticket.hostId !== user.userId) throw new Error("Unauthorized access to ticket");
+
+    const message = await prisma.ticketMessage.create({
+        data: {
+            ticketId,
+            senderId: user.userId,
+            content,
+            isAdmin
+        }
+    });
+
+    // Update flags
+    await prisma.supportTicket.update({
+        where: { id: ticketId },
+        data: { 
+            status: isAdmin ? 'IN_PROGRESS' : 'OPEN',
+            updatedAt: new Date(),
+            hasUnreadForAdmin: !isAdmin,
+            hasUnreadForHost: isAdmin
+        }
+    });
+
+    // Unified Notification Payload
+    const payload = {
+        type: 'TICKET_REPLY',
+        ticketId: ticket.id,
+        message, 
+        notifyAdmin: !isAdmin, 
+        notifyUser: isAdmin,   
+        targetUserId: isAdmin ? ticket.hostId : null 
+    };
+
+    console.log('[ACTION] Publishing TICKET_REPLY to ticket_updates:', payload);
+    await redis.publish('ticket_updates', JSON.stringify(payload));
+
+    if (isAdmin) revalidatePath('/admin/support');
+    else revalidatePath(`/${user.username}/support`);
+}
+
+export async function markTicketRead(ticketId: string) {
+    const user = await getCurrentUser();
+    if (!user) return;
+
+    const isAdmin = user.userId === process.env.SUPER_ADMIN_ID;
+    console.log(`[ACTION] Marking ticket ${ticketId} read for ${isAdmin ? 'Admin' : 'Host'}`);
+
+    await prisma.supportTicket.update({
+        where: { id: ticketId },
+        data: {
+            hasUnreadForAdmin: isAdmin ? false : undefined,
+            hasUnreadForHost: !isAdmin ? false : undefined
+        }
+    });
+}
+
+export async function getUnreadTicketCount() {
+    const user = await getCurrentUser();
+    if (!user) return 0;
+
+    const isAdmin = user.userId === process.env.SUPER_ADMIN_ID;
+
+    if (isAdmin) {
+        return await prisma.supportTicket.count({
+            where: { hasUnreadForAdmin: true }
+        });
+    } else {
+        return await prisma.supportTicket.count({
+            where: { 
+                hostId: user.userId,
+                hasUnreadForHost: true
+            }
+        });
+    }
+}
+
+export async function updateTicketStatus(ticketId: string, status: 'OPEN' | 'RESOLVED' | 'CLOSED') {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    console.log(`[ACTION] Updating status for ticket ${ticketId} to ${status}`);
+
+    const ticket = await prisma.supportTicket.update({
+        where: { id: ticketId },
+        data: { 
+            status,
+            hasUnreadForHost: true 
+        }
+    });
+
+    const payload = {
+        type: 'TICKET_STATUS',
+        ticketId: ticket.id,
+        status: status,
+        notifyUser: true,
+        targetUserId: ticket.hostId
+    };
+
+    console.log('[ACTION] Publishing TICKET_STATUS to ticket_updates:', payload);
+    await redis.publish('ticket_updates', JSON.stringify(payload));
+
+    revalidatePath('/admin/support');
+}
+
+export async function getTicketsForHost() {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Unauthorized");
+
+    return await prisma.supportTicket.findMany({
+        where: { hostId: user.userId },
+        include: { messages: { orderBy: { createdAt: 'asc' } } },
+        orderBy: { updatedAt: 'desc' }
+    });
+}
+
+export async function getAllTicketsAdmin() {
+    const user = await getCurrentUser();
+    if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
+
+    return await prisma.supportTicket.findMany({
+        include: { 
+            host: { select: { username: true, avatarUrl: true } },
+            messages: { orderBy: { createdAt: 'asc' } } 
+        },
+        orderBy: { updatedAt: 'desc' }
+    });
+}
+
+// ... (Rest of existing actions: submitFeedback, getSystemHealth, etc. remain unchanged) ...
 
 export async function submitFeedback(formData: FormData) {
     const content = formData.get('content') as string;
     const type = formData.get('type') as 'BUG' | 'SUGGESTION' | 'OTHER';
-    
     const hostUser = await getCurrentUser();
     const guestId = cookies().get('guest_id')?.value;
     const userId = hostUser?.userId || guestId || null;
-
     if (!content || !type) throw new Error("Missing fields");
-
-    // Create DB Entry
-    const feedback = await prisma.systemFeedback.create({
-        data: {
-            content,
-            type,
-            userId
-        }
-    });
-
-    // Notify Admins Real-Time via Redis to Server.ts
-    console.log('[ACTION] Publishing feedback to admin_channel via Redis');
-    await redis.publish('admin_channel', JSON.stringify({ 
-        type: 'NEW_FEEDBACK', 
-        data: feedback 
-    }));
+    const feedback = await prisma.systemFeedback.create({ data: { content, type, userId } });
+    await redis.publish('admin_channel', JSON.stringify({ type: 'NEW_FEEDBACK', data: feedback }));
 }
 
 export async function getSystemFeedback() {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
-
-    return await prisma.systemFeedback.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 100 // Cap for performance
-    });
+    return await prisma.systemFeedback.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
 }
 
 export async function updateFeedbackStatus(id: string, status: 'OPEN' | 'RESOLVED' | 'ARCHIVED') {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
-
-    await prisma.systemFeedback.update({
-        where: { id },
-        data: { status }
-    });
+    await prisma.systemFeedback.update({ where: { id }, data: { status } });
     revalidatePath('/admin/feedback');
 }
 
 export async function deleteFeedback(id: string) {
     const user = await getCurrentUser();
     if (!user || user.userId !== process.env.SUPER_ADMIN_ID) throw new Error("Unauthorized");
-
     await prisma.systemFeedback.delete({ where: { id } });
     revalidatePath('/admin/feedback');
 }
-
-// ... (Rest of existing actions below) ...
 
 export async function getDetailedAnalytics() {
     const user = await getCurrentUser();

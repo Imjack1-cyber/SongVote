@@ -10,7 +10,9 @@
     "ExcludedFiles":  [
                           "C:\\dev\\eclipse\\workspace\\SongVote\\combine_code_gui.ps1",
                           "C:\\dev\\eclipse\\workspace\\SongVote\\package-lock.json",
-                          "C:\\dev\\eclipse\\workspace\\SongVote\\songvote.txt"
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\songvote.txt",
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\Feature_Ideas.md",
+                          "C:\\dev\\eclipse\\workspace\\SongVote\\config.json"
                       ],
     "ExtensionFilterList":  [
 
