@@ -448,6 +448,8 @@ export async function updateSessionRules(formData: FormData) {
   const enableReactions = formData.get('enableReactions') === 'on';
   const enableDuplicateCheck = formData.get('enableDuplicateCheck') === 'on';
   const enableRegionCheck = formData.get('enableRegionCheck') === 'on';
+  const enableInfiniteFlow = formData.get('enableInfiniteFlow') === 'on'; // NEW: Plan 1
+
   let cleanedPlaylistId = null;
   if (backupPlaylistId) {
       const match = backupPlaylistId.match(/[?&]list=([^#\&\?]+)/);
@@ -455,9 +457,17 @@ export async function updateSessionRules(formData: FormData) {
   }
   const startTime = startTimeStr ? new Date(startTimeStr) : null;
   const endTime = endTimeStr ? new Date(endTimeStr) : null;
+  
   await prisma.voteSession.update({
     where: { id: sessionId, hostId: user.userId },
-    data: { requireVerification, votesPerUser, cycleDelay, startTime, endTime, backupPlaylistId: cleanedPlaylistId, backupCollectionId: backupCollectionId || null, autoAddToCollectionId: autoAddToCollectionId || null, enableReactions, enableDuplicateCheck, enableRegionCheck }
+    data: { 
+        requireVerification, votesPerUser, cycleDelay, 
+        startTime, endTime, 
+        backupPlaylistId: cleanedPlaylistId, backupCollectionId: backupCollectionId || null, 
+        autoAddToCollectionId: autoAddToCollectionId || null, 
+        enableReactions, enableDuplicateCheck, enableRegionCheck,
+        enableInfiniteFlow 
+    }
   });
   if (cleanedPlaylistId) { await redis.del(`radio_playlist:${cleanedPlaylistId}`); }
   logger.info({ userId: user.userId, sessionId }, 'Session Rules Updated');

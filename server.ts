@@ -10,7 +10,7 @@ import { checkRateLimit } from './lib/ratelimit';
 import { z } from 'zod';
 import * as cookie from 'cookie';
 import { jwtVerify } from 'jose';
-import { getPlaylistItems, searchYouTube, YouTubeSearchResult } from './lib/youtube';
+import { getPlaylistItems, searchYouTube, YouTubeSearchResult, getRelatedVideos } from './lib/youtube';
 import { logger } from './lib/logger';
 import { selectSmartTrack, CandidateSong } from './lib/smartRadio';
 
@@ -244,6 +244,45 @@ const playRadioSong = async (sessionId: string) => {
         }));
     }
 
+    // --- INFINITE FLOW INJECTION (NEW PLAN 1) ---
+    if (session.enableInfiniteFlow) {
+        const lastPlayed = await prisma.queueItem.findFirst({
+            where: { voteSessionId: sessionId, status: 'PLAYED' },
+            orderBy: { updatedAt: 'desc' },
+            select: { songId: true }
+        });
+
+        if (lastPlayed) {
+            try {
+                // Fetch related videos (Cached indefinitely via Lib)
+                const related = await getRelatedVideos(lastPlayed.songId, session.hostId);
+                
+                // Track existing IDs to prevent overriding "Real" playlist items with "Generic" suggestions
+                const existingIds = new Set(candidates.map(c => c.id));
+                
+                related.forEach(r => {
+                    if (!existingIds.has(r.id)) {
+                        candidates.push({
+                            id: r.id,
+                            title: r.title,
+                            artist: r.artist,
+                            albumArtUrl: r.albumArtUrl,
+                            playCount: 0,
+                            // Give them a "Freshness Bonus" (Weight ~1.3) so they compete with base songs
+                            reactionCount: 2 
+                        });
+                    }
+                });
+                
+                if (related.length > 0) {
+                    logger.info({ sessionId, count: related.length }, 'Infinite Flow: Injected Suggestions');
+                }
+            } catch (e) {
+                logger.error({ err: e, sessionId }, 'Infinite Flow Injection Failed');
+            }
+        }
+    }
+
     // 6. Get Recent History for Cooldown Logic
     const recentHistory = await prisma.queueItem.findMany({
         where: { voteSessionId: sessionId, status: 'PLAYED' },
@@ -261,7 +300,7 @@ const playRadioSong = async (sessionId: string) => {
     }
 
     // 8. Queue the Winner
-    // Ensure Song exists in DB (needed if coming fresh from a Playlist)
+    // Ensure Song exists in DB (needed if coming fresh from a Playlist or Infinite Flow)
     await prisma.song.upsert({
         where: { id: selectedSong.id },
         update: {},

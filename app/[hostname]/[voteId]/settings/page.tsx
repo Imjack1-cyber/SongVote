@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { updateSessionRules, generateGuests } from '@/app/actions';
-import { Clock, Users, AlertTriangle, CheckCircle, Radio, Save, ToggleLeft } from 'lucide-react';
+import { Clock, Users, AlertTriangle, CheckCircle, Radio, Save, ToggleLeft, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import GuestList from '@/components/host/GuestList';
 import SessionManager from '@/components/host/SessionManager';
@@ -56,7 +56,7 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                         <form action={updateSessionRules} className="grid gap-6">
                             <input type="hidden" name="sessionId" value={session.id} />
                             
-                            {/* Toggles ... (same as before) */}
+                            {/* Toggles */}
                             <div className="grid md:grid-cols-2 gap-4 p-4 bg-[var(--foreground)]/5 rounded-xl border border-[var(--border)]">
                                 <h3 className="md:col-span-2 font-bold text-sm uppercase tracking-wider opacity-60 flex items-center gap-2">
                                     <ToggleLeft className="w-4 h-4" /> Feature Toggles
@@ -75,7 +75,7 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                                 </div>
                             </div>
 
-                            {/* Limits ... (same as before) */}
+                            {/* Limits */}
                             <div className="grid md:grid-cols-2 gap-6">
                                 <div className="space-y-4">
                                     <div>
@@ -100,46 +100,72 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                             </div>
                             
                             {/* RADIO & AUTO-SAVE */}
-                            <div id="radio-config" className="pt-4 border-t border-[var(--border)] grid md:grid-cols-2 gap-6">
-                                <div id="radio-config-container"> {/* <--- NEW ID HERE */}
-                                    <h3 className="font-bold text-sm mb-2 flex items-center gap-2 opacity-80">
-                                        <Radio className="w-4 h-4" /> Radio Backup Source
-                                    </h3>
-                                    <select 
-                                        name="backupCollectionId" 
-                                        defaultValue={session.backupCollectionId || ''}
-                                        className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)] mb-2"
-                                    >
-                                        <option value="">-- Internal Library (Preferred) --</option>
-                                        {collections.map(c => (
-                                            <option key={c.id} value={c.id}>{c.title} ({c._count.items} songs)</option>
-                                        ))}
-                                    </select>
-                                    <input 
-                                        id="radio-input"
-                                        name="backupPlaylistId" 
-                                        type="text" 
-                                        placeholder="Or YouTube Playlist URL..." 
-                                        defaultValue={session.backupPlaylistId || ''}
-                                        className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" 
-                                    />
+                            <div id="radio-config" className="pt-4 border-t border-[var(--border)] space-y-6">
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    <div id="radio-config-container">
+                                        <h3 className="font-bold text-sm mb-2 flex items-center gap-2 opacity-80">
+                                            <Radio className="w-4 h-4" /> Radio Backup Source
+                                        </h3>
+                                        <select 
+                                            name="backupCollectionId" 
+                                            defaultValue={session.backupCollectionId || ''}
+                                            className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)] mb-2"
+                                        >
+                                            <option value="">-- Internal Library (Preferred) --</option>
+                                            {collections.map(c => (
+                                                <option key={c.id} value={c.id}>{c.title} ({c._count.items} songs)</option>
+                                            ))}
+                                        </select>
+                                        <input 
+                                            id="radio-input"
+                                            name="backupPlaylistId" 
+                                            type="text" 
+                                            placeholder="Or YouTube Playlist URL..." 
+                                            defaultValue={session.backupPlaylistId || ''}
+                                            className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]" 
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <h3 className="font-bold text-sm mb-2 flex items-center gap-2 opacity-80">
+                                            <Save className="w-4 h-4" /> Smart Library (Auto-Save)
+                                        </h3>
+                                        <select 
+                                            id="auto-save-select"
+                                            name="autoAddToCollectionId" 
+                                            defaultValue={session.autoAddToCollectionId || ''}
+                                            className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]"
+                                        >
+                                            <option value="">-- Disabled --</option>
+                                            {collections.map(c => (
+                                                <option key={c.id} value={c.id}>{c.title}</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 </div>
 
-                                <div>
-                                    <h3 className="font-bold text-sm mb-2 flex items-center gap-2 opacity-80">
-                                        <Save className="w-4 h-4" /> Smart Library (Auto-Save)
-                                    </h3>
-                                    <select 
-                                        id="auto-save-select"
-                                        name="autoAddToCollectionId" 
-                                        defaultValue={session.autoAddToCollectionId || ''}
-                                        className="w-full p-2 rounded bg-[var(--background)] border border-[var(--border)]"
-                                    >
-                                        <option value="">-- Disabled --</option>
-                                        {collections.map(c => (
-                                            <option key={c.id} value={c.id}>{c.title}</option>
-                                        ))}
-                                    </select>
+                                {/* Infinite Flow Toggle (New) */}
+                                <div className="flex items-center justify-between p-3 border border-[var(--border)] rounded-lg bg-[var(--background)]">
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <label htmlFor="toggle-infinite" className="text-sm font-bold flex items-center gap-2">
+                                                <Sparkles className="w-4 h-4 text-purple-500" /> Infinite Flow
+                                            </label>
+                                            <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 rounded font-bold uppercase">New</span>
+                                        </div>
+                                        <p className="text-xs opacity-60 mt-1 max-w-[250px] leading-tight">
+                                            Let YouTube suggest related songs based on the vibe.
+                                            <br/>
+                                            <span className="text-red-500 font-bold">Warning: Uses High API Quota (100 units/song).</span>
+                                        </p>
+                                    </div>
+                                    <input 
+                                        id="toggle-infinite" 
+                                        type="checkbox" 
+                                        name="enableInfiniteFlow" 
+                                        defaultChecked={session.enableInfiniteFlow} 
+                                        className="w-5 h-5 accent-purple-500" 
+                                    />
                                 </div>
                             </div>
 
@@ -158,7 +184,6 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
 
                 <div className="space-y-8">
                     <div id="api-status-card" className={`p-4 rounded-xl border ${isYoutubeReady ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                        {/* Status Content... */}
                          <div className="flex items-center gap-3 mb-2 font-bold">
                             {isYoutubeReady ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
                             Music Source
@@ -182,7 +207,6 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                         <BlacklistManager />
                     </div>
                     <div id="guest-management" className="card p-6">
-                         {/* Guest Content... */}
                          <h2 className="text-xl font-bold flex items-center gap-2 mb-4">
                             <Users className="w-5 h-5" /> Guests
                         </h2>

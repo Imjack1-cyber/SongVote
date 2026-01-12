@@ -134,9 +134,14 @@ export default function OnboardingTour({ isHost, tutorialCompleted, hostName }: 
         { element: '#toggle-verify', popover: { title: 'Verification', description: 'Require manual approval for songs.' } },
         { element: '#radio-config-container', popover: { title: 'Smart Radio', description: 'Choose fallback music when queue is empty.' } },
         { element: '#auto-save-select', popover: { title: 'Auto-Save', description: 'Save played songs to a playlist automatically.' } },
+        
+        // 36 
+        { element: '#toggle-infinite', popover: { title: 'Infinite Flow 🚀', description: 'Enable this to let YouTube suggest related songs when the queue is empty. Great for discovery, but uses more API quota.' } },
+
+        // 37
         { element: '#save-session-settings-btn', popover: { title: 'Save Rules', description: 'Don\'t forget to save!' } },
 
-        // 36-41
+        // 38-43
         { element: '#analytics-section', popover: { title: 'Analytics', description: 'See voting stats.' } },
         { element: '#history-section', popover: { title: 'History', description: 'View played songs.' } },
         { element: '#history-section button', popover: { title: 'Export', description: 'Export history to CSV.' } }, 
@@ -144,23 +149,23 @@ export default function OnboardingTour({ isHost, tutorialCompleted, hostName }: 
         { element: '#leaderboard-section', popover: { title: 'Leaderboard', description: 'Top contributing guests.' } },
         { element: '#blacklist-section', popover: { title: 'Blacklist', description: 'Block specific songs or keywords.' } },
 
-        // 42-45
+        // 44-47
         { element: '#guest-management', popover: { title: 'Guest Access', description: 'Manage guest accounts.' } },
         { element: '#guest-count-input', popover: { title: 'Create Accounts', description: 'Enter number of guests here.' } },
         { element: '#guest-add-btn', popover: { title: 'Add Guests', description: 'Click Add to generate codes.' } }, 
         { element: '.guest-ban-btn', popover: { title: 'Block Access', description: 'Click the Ban icon to block a user.' } }, 
         
-        // 46
+        // 48
         { element: '#print-cards-btn', popover: { title: 'Print Cards', description: 'Click to print QR cards.', onNextClick: () => {
             const link = document.getElementById('print-cards-btn') as HTMLAnchorElement;
             if(link) {
                 isNavigating.current = true;
-                localStorage.setItem('songvote_tour_step', '47'); 
+                localStorage.setItem('songvote_tour_step', '49'); 
                 window.open(link.href, '_self');
             }
         }} },
 
-        // 47-49 (Print Preview)
+        // 49-51 (Print Preview)
         { element: '#print-preview-wrapper', popover: { title: 'Preview', description: 'This shows how your guest cards will look on paper.' } },
         { element: '#print-controls', popover: { title: 'Customize', description: 'Adjust layout settings (Desktop only).' } },
         { 
@@ -171,44 +176,44 @@ export default function OnboardingTour({ isHost, tutorialCompleted, hostName }: 
                 side: 'top', 
                 onNextClick: () => {
                     isNavigating.current = true;
-                    localStorage.setItem('songvote_tour_step', '50');
+                    localStorage.setItem('songvote_tour_step', '52');
                     router.back();
                 } 
             } 
         },
 
-        // 50
+        // 52
         { element: '#back-to-player-btn', popover: { title: 'Return to Player', description: 'Settings done. Let\'s go back.', onNextClick: () => {
              const link = document.getElementById('back-to-player-btn') as HTMLAnchorElement;
              if(link) {
                  isNavigating.current = true;
-                 localStorage.setItem('songvote_tour_step', '51');
+                 localStorage.setItem('songvote_tour_step', '53');
                  router.push(link.href);
              }
         }} },
 
-        // 51-53
+        // 53-55
         { element: '#print-cards-btn', popover: { title: 'Quick Print', description: 'Shortcut to print page.' } }, 
         { element: '#visualizer-btn', popover: { title: 'Visualizer', description: 'Open TV mode.' } },
         { element: '#qr-btn', popover: { title: 'QR Code', description: 'Show Join Code overlay.' } },
         
-        // 54 (DISABLED INTERACTION)
+        // 56 (DISABLED INTERACTION)
         { 
-            element: '#qr-btn', // Step 54
+            element: '#qr-btn', 
             popover: { title: 'QR Code', description: 'Show Join Code overlay.' },
             onHighlightStarted: disableClicks,
             onDeselected: enableClicks
         },
         
-        // 55 (DISABLED INTERACTION)
+        // 57 (DISABLED INTERACTION)
         { 
-            element: '#share-btn', // Step 55
+            element: '#share-btn', 
             popover: { title: 'Share Link', description: 'Copy link to clipboard.' },
             onHighlightStarted: disableClicks,
             onDeselected: enableClicks
         }, 
         
-        // 56-61
+        // 58-63
         { element: '#song-search-input', popover: { title: 'Search', description: 'Search for songs here. Checks library + YouTube.' } },
         { element: '#search-results', popover: { title: 'Results', description: 'Click + to add found songs.' } },
         { element: '#host-player', popover: { title: 'The Player', description: 'Main playback area.' } },
@@ -216,19 +221,19 @@ export default function OnboardingTour({ isHost, tutorialCompleted, hostName }: 
         { element: '#reset-player-btn', popover: { title: 'Reset', description: 'Fix playback glitches.' } },
         { element: '#force-play-btn', popover: { title: 'Force Play', description: 'Force a URL to play immediately.' } },
         
-        // 62 (DISABLED INTERACTION)
+        // 64 (DISABLED INTERACTION)
         { 
-            element: '#host-player', // Step 62
+            element: '#host-player',
             popover: { title: 'Controls', description: 'Standard controls are self-explanatory.' },
             onHighlightStarted: disableClicks,
             onDeselected: enableClicks
         },
         
-        // 63-64
+        // 65-66
         { element: '#up-next-list', popover: { title: 'Up Next', description: 'See queue and pending suggestions.' } },
         { element: '#played-history-list', popover: { title: 'History', description: 'Recently played tracks.' } },
         
-        // 65 (FINAL - WITH CELEBRATION)
+        // 67 (FINAL - WITH CELEBRATION)
         { 
             element: '#app-footer', 
             popover: { 
@@ -251,7 +256,7 @@ export default function OnboardingTour({ isHost, tutorialCompleted, hostName }: 
         }
     ];
 
-    // --- RESUME LOGIC ---
+    // --- RESUME LOGIC (Updated Indices for Infinite Flow Step) ---
     let shouldRedirect = false;
     let targetPath = '';
 
@@ -269,13 +274,16 @@ export default function OnboardingTour({ isHost, tutorialCompleted, hostName }: 
     }
     else if (pathname.match(new RegExp(`^/${hostName}/[^/]+$`))) {
         if (currentStepIndex < 20) currentStepIndex = 20;
-        if (currentStepIndex > 21 && currentStepIndex < 51) currentStepIndex = 51; 
+        // Range pushed by 2 (Settings grew) -> Player steps start at 53
+        if (currentStepIndex > 21 && currentStepIndex < 53) currentStepIndex = 53; 
     }
     else if (pathname.match(new RegExp(`^/${hostName}/[^/]+/settings$`))) {
-        if (currentStepIndex < 22 || currentStepIndex > 50) currentStepIndex = 22;
+        // Settings range: 22 to 52
+        if (currentStepIndex < 22 || currentStepIndex > 52) currentStepIndex = 22;
     }
     else if (pathname.match(new RegExp(`^/${hostName}/[^/]+/print$`))) {
-        if (currentStepIndex < 46 || currentStepIndex > 49) currentStepIndex = 46;
+        // Print range: 48 to 51
+        if (currentStepIndex < 48 || currentStepIndex > 51) currentStepIndex = 48;
     }
 
     if (shouldRedirect) {

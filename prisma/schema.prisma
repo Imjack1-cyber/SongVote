@@ -66,6 +66,7 @@ model VoteSession {
   enableReactions      Boolean @default(false) 
   enableDuplicateCheck Boolean @default(true)
   enableRegionCheck    Boolean @default(true)
+  enableInfiniteFlow   Boolean @default(false) // New: Plan 1 Feature Flag
 
   defaultPermissions  Json?   
 
@@ -110,7 +111,7 @@ model Song {
   albumArtUrl String? 
   durationMs  Int
   playCount   Int      @default(0)
-  reactionCount Int    @default(0) 
+  reactionCount Int    @default(0)
   cachedAt    DateTime @default(now())
   queueItems  QueueItem[]
   collectionItems CollectionItem[]
@@ -125,7 +126,7 @@ model QueueItem {
   suggestedByGuestId String?
   guest              GuestAccount? @relation(fields: [suggestedByGuestId], references: [id])
   voteCount     Int         @default(0)
-  reactionCount Int         @default(0) 
+  reactionCount Int         @default(0)
   status        QueueStatus @default(PENDING)
   isRadio       Boolean     @default(false)
   createdAt     DateTime    @default(now())
@@ -175,8 +176,6 @@ model SystemFeedback {
   createdAt DateTime       @default(now())
 }
 
-// --- SUPPORT TICKET SYSTEM (Host <-> Admin) ---
-
 model SupportTicket {
   id        String   @id @default(uuid())
   hostId    String
@@ -202,8 +201,6 @@ model TicketMessage {
   createdAt DateTime @default(now())
   isAdmin   Boolean  @default(false)
 }
-
-// --- LIVE CHAT SYSTEM (Guest <-> Host) ---
 
 model LiveChatSession {
   id            String   @id @default(uuid())

@@ -1,6 +1,7 @@
 import { prisma } from './db';
 import { decrypt } from './crypto';
 import { logger } from './logger';
+import { redis } from './redis';
 
 export interface YouTubeSearchResult {
   id: string;
@@ -171,4 +172,96 @@ export async function getPlaylistItems(playlistId: string, hostId: string): Prom
       logger.error({ err: e, playlistId }, "Playlist Fetch Error");
       return [];
   }
+}
+
+/**
+ * Gets related videos for Infinite Flow.
+ * STRATEGY REVISION: `relatedToVideoId` is deprecated.
+ * New Strategy: Fetch Artist Name (Channel) -> Search for Artist -> Filter duplicates.
+ */
+export async function getRelatedVideos(videoId: string, hostId: string): Promise<YouTubeSearchResult[]> {
+    // 1. Check Infinite Cache
+    const cacheKey = `related_videos_v2:${videoId}`;
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+        return JSON.parse(cached);
+    }
+
+    // 2. Fetch Credentials
+    const host = await prisma.host.findUnique({
+        where: { id: hostId },
+        select: { youtubeApiKey: true }
+    });
+
+    if (!host || !host.youtubeApiKey) return [];
+    const decryptedKey = decrypt(host.youtubeApiKey);
+
+    try {
+        // 3. STEP A: Get Video Details to find the Artist (Channel Title)
+        // Cost: 1 Unit
+        const VIDEO_ENDPOINT = 'https://www.googleapis.com/youtube/v3/videos';
+        const vidParams = new URLSearchParams({
+            part: 'snippet',
+            id: videoId,
+            key: decryptedKey
+        });
+        
+        const vidRes = await fetch(`${VIDEO_ENDPOINT}?${vidParams.toString()}`);
+        const vidData = await vidRes.json();
+
+        if (!vidData.items || vidData.items.length === 0) {
+            logger.warn({ hostId, videoId }, 'Infinite Flow: Source video not found');
+            return [];
+        }
+
+        const artistName = vidData.items[0].snippet.channelTitle;
+        
+        // 4. STEP B: Search for music by this Artist
+        // Cost: 100 Units
+        // Query: "Artist Name music"
+        const SEARCH_ENDPOINT = 'https://www.googleapis.com/youtube/v3/search';
+        const searchParams = new URLSearchParams({
+            part: 'snippet',
+            maxResults: '6', // Fetch 6, drop 1 (the original) = 5 suggestions
+            type: 'video',
+            q: `${artistName} music`, 
+            videoCategoryId: '10', // Music Category
+            key: decryptedKey
+        });
+
+        const searchRes = await fetch(`${SEARCH_ENDPOINT}?${searchParams.toString()}`);
+        const searchData = await searchRes.json();
+
+        if (searchData.error) {
+            logger.error({ err: searchData.error, hostId, videoId }, 'YouTube Search API Error (Infinite Flow)');
+            return [];
+        }
+
+        if (!searchData.items) return [];
+
+        // 5. Map & Filter (Remove the seed video from results)
+        const results: YouTubeSearchResult[] = searchData.items
+            .filter((item: any) => item.id.videoId !== videoId)
+            .map((item: any) => ({
+                id: item.id.videoId,
+                title: item.snippet.title,
+                artist: item.snippet.channelTitle,
+                album: 'Infinite Flow',
+                albumArtUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
+                durationMs: 0
+            }))
+            .slice(0, 5); // Ensure cap at 5
+
+        // 6. Cache Forever
+        if (results.length > 0) {
+            await redis.set(cacheKey, JSON.stringify(results));
+            logger.info({ hostId, videoId, artistName, count: results.length }, 'Fetched & Cached Infinite Flow');
+        }
+
+        return results;
+
+    } catch (e) {
+        logger.error({ err: e, hostId, videoId }, 'Related Videos Fetch Failed');
+        return [];
+    }
 }
