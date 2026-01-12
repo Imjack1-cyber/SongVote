@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { Search, Plus, Loader2, ArrowRight } from 'lucide-react';
+import { Search, Plus, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { Spinner } from '@/components/ui/Loaders';
 
 // Simple entity decoder
 const decodeHtmlEntities = (str: string) => {
@@ -69,16 +71,33 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
         <button 
             type="submit" 
             disabled={loading || !query.trim()}
-            className="absolute right-3 top-2.5 p-2 bg-[var(--accent)] text-[var(--accent-fg)] rounded-lg hover:brightness-110 disabled:opacity-50 transition-all"
+            className="absolute right-3 top-2.5 p-2 bg-[var(--accent)] text-[var(--accent-fg)] rounded-lg hover:brightness-110 disabled:opacity-50 transition-all flex items-center justify-center"
         >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
+            {loading ? <Spinner className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
         </button>
       </form>
 
-      {results.length > 0 ? (
+      {loading ? (
+        /* SKELETON LOADING STATE */
+        <div className="card divide-y divide-[var(--border)] max-h-[300px] overflow-hidden shadow-xl z-50 relative animate-in fade-in slide-in-from-top-2">
+            {[1, 2, 3].map((i) => (
+                <div key={i} className="p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3 flex-1">
+                        <Skeleton className="w-10 h-10 rounded-md flex-shrink-0" />
+                        <div className="space-y-2 flex-1">
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-3 w-1/2" />
+                        </div>
+                    </div>
+                    <Skeleton className="w-9 h-9 rounded-full" />
+                </div>
+            ))}
+        </div>
+      ) : results.length > 0 ? (
+        /* RESULTS STATE */
         <div id="search-results" className="card divide-y divide-[var(--border)] max-h-[300px] overflow-y-auto shadow-xl z-50 relative animate-in fade-in slide-in-from-top-2">
           {results.map((track) => (
-            <div key={track.id} className="p-3 flex items-center justify-between hover:bg-[var(--foreground)]/5 transition">
+            <div key={track.id} className="p-3 flex items-center justify-between hover:bg-[var(--foreground)]/5 transition group">
               <div className="flex items-center gap-3 overflow-hidden">
                 <div className="relative w-10 h-10 flex-shrink-0 bg-black rounded-md overflow-hidden">
                   {track.albumArtUrl ? (
@@ -95,7 +114,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
                   )}
                 </div>
                 <div className="overflow-hidden min-w-0">
-                  <p className="font-medium text-sm truncate">
+                  <p className="font-medium text-sm truncate group-hover:text-[var(--accent)] transition-colors">
                      {decodeHtmlEntities(track.title)}
                   </p>
                   <p className="text-xs opacity-60 truncate">{track.artist}</p>
@@ -109,6 +128,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
                     setHasSearched(false);
                 }}
                 className="p-2 flex-shrink-0 rounded-full hover:bg-[var(--accent)] hover:text-white text-[var(--accent)] transition-colors"
+                title="Add to Queue"
               >
                 <Plus className="w-5 h-5" />
               </button>
@@ -117,7 +137,7 @@ export default function SongSearch({ hostName, onSuggest }: SongSearchProps) {
         </div>
       ) : (
         hasSearched && !loading && (
-            <div className="text-center p-4 opacity-50 text-sm">
+            <div className="text-center p-4 opacity-50 text-sm animate-in fade-in">
                 No songs found in database or YouTube.
             </div>
         )

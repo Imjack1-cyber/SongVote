@@ -2,8 +2,9 @@ import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { updateGlobalSettings, saveYoutubeCredentials } from '@/app/actions';
-import { CheckCircle, ExternalLink, Key } from 'lucide-react';
+import { CheckCircle, Key } from 'lucide-react';
 import LibraryManager from '@/components/host/LibraryManager';
+import SubmitButton from '@/components/common/SubmitButton';
 
 export default async function GlobalSettingsPage({ params }: { params: { hostname: string } }) {
   const user = await getCurrentUser();
@@ -45,6 +46,7 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
                 </div>
             </div>
 
+            {/* --- INSTRUCTIONS DIV --- */}
             {!hasYoutubeKey && (
                 <div id="youtube-help-box" className="mb-6 bg-[var(--surface)] p-4 rounded-lg border border-[var(--border)] text-sm">
                     <p className="font-bold mb-2">How to get a Free Key:</p>
@@ -52,7 +54,7 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
                         <li>Go to <a href="https://console.cloud.google.com/" target="_blank" className="text-[var(--accent)] underline">Google Cloud Console</a>.</li>
                         <li>Create a new Project.</li>
                         <li>Enable the <strong>YouTube Data API v3</strong>.</li>
-                        <li>Create Credentials --> <strong>API Key</strong>.</li>
+                        <li>Create Credentials &rarr; <strong>API Key</strong>.</li>
                         <li>Paste it below.</li>
                     </ol>
                 </div>
@@ -72,9 +74,14 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
                         <Key className="absolute left-3 top-2.5 w-4 h-4 opacity-40" />
                     </div>
                 </div>
-                <button id="save-youtube-btn" type="submit" className="btn-primary w-full">
+                
+                <SubmitButton 
+                    id="save-youtube-btn" 
+                    className="w-full"
+                    loadingText="Encrypting & Saving..."
+                >
                     {hasYoutubeKey ? 'Update Key' : 'Save Key'}
-                </button>
+                </SubmitButton>
             </form>
         </div>
       </section>
@@ -85,7 +92,6 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
             <h2 className="text-xl font-bold">Music Library</h2>
         </div>
         <div className="card p-6">
-            {/* We pass IDs inside this component */}
             <LibraryManager collections={host?.collections || []} sessionId="" />
         </div>
       </section>
@@ -129,7 +135,13 @@ export default async function GlobalSettingsPage({ params }: { params: { hostnam
             </div>
 
              <div className="md:col-span-2">
-                 <button id="save-appearance-btn" type="submit" className="btn-primary w-full">Save Appearance Settings</button>
+                 <SubmitButton 
+                    id="save-appearance-btn" 
+                    className="w-full"
+                    loadingText="Applying Theme..."
+                 >
+                    Save Appearance Settings
+                 </SubmitButton>
              </div>
         </form>
       </section>

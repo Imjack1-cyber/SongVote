@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { MessageCircle, X, Send, User, Shield } from 'lucide-react';
+import { MessageCircle, X, Send, User, Shield, Check } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
+import { Spinner } from '@/components/ui/Loaders';
 
 interface Message {
     id: string;
     content: string;
     isFromGuest: boolean;
     createdAt: Date;
+    pending?: boolean; // New UI state
 }
 
 interface LiveHelpBubbleProps {
@@ -21,6 +23,7 @@ export default function LiveHelpBubble({ sessionId, guestId }: LiveHelpBubblePro
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [hasUnread, setHasUnread] = useState(false);
+    const [isSending, setIsSending] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const { socket } = useSocket(sessionId);
 
@@ -34,7 +37,11 @@ export default function LiveHelpBubble({ sessionId, guestId }: LiveHelpBubblePro
         });
 
         socket.on('live-chat-message', (msg: Message) => {
-            setMessages(prev => [...prev, msg]);
+            setMessages(prev => {
+                const filtered = prev.filter(m => !m.pending); 
+                return [...filtered, msg];
+            });
+            
             if (!msg.isFromGuest && !isOpen) {
                 setHasUnread(true);
             }
@@ -52,14 +59,32 @@ export default function LiveHelpBubble({ sessionId, guestId }: LiveHelpBubblePro
     const sendMessage = (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || !socket) return;
-
+        
+        setIsSending(true);
+        const tempId = 'temp-' + Date.now();
+        const content = input;
+        
+        // Optimistic UI
+        const optimisticMsg: Message = {
+            id: tempId,
+            content: content,
+            isFromGuest: true,
+            createdAt: new Date(),
+            pending: true
+        };
+        
+        setMessages(prev => [...prev, optimisticMsg]);
+        setInput('');
+       
         socket.emit('send-live-chat-message', {
             sessionId,
             guestId,
-            content: input,
+            content,
             isHostReply: false
+        }, () => {
+           setIsSending(false); 
         });
-        setInput('');
+        setTimeout(() => setIsSending(false), 500);
     };
 
     return (
@@ -89,12 +114,13 @@ export default function LiveHelpBubble({ sessionId, guestId }: LiveHelpBubblePro
                         )}
                         {messages.map((msg, idx) => (
                             <div key={idx} className={`flex ${msg.isFromGuest ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[80%] p-2 rounded-xl text-sm ${
+                                <div className={`max-w-[80%] p-2 rounded-xl text-sm relative ${
                                     msg.isFromGuest 
                                         ? 'bg-[var(--accent)] text-[var(--accent-fg)] rounded-tr-none' 
                                         : 'bg-[var(--foreground)]/10 rounded-tl-none'
-                                }`}>
+                                } ${msg.pending ? 'opacity-70' : ''}`}>
                                     {msg.content}
+                                    {msg.pending && <Spinner className="w-3 h-3 absolute -bottom-4 right-0 text-[var(--foreground)] opacity-50" />}
                                 </div>
                             </div>
                         ))}
@@ -107,8 +133,12 @@ export default function LiveHelpBubble({ sessionId, guestId }: LiveHelpBubblePro
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                         />
-                        <button type="submit" className="p-2 rounded-lg bg-[var(--accent)] text-[var(--accent-fg)]">
-                            <Send className="w-4 h-4" />
+                        <button 
+                            type="submit" 
+                            disabled={isSending}
+                            className="p-2 rounded-lg bg-[var(--accent)] text-[var(--accent-fg)] disabled:opacity-50"
+                        >
+                            {isSending ? <Spinner className="w-4 h-4" /> : <Send className="w-4 h-4" />}
                         </button>
                     </form>
                 </div>

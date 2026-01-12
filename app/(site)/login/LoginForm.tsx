@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, LogIn } from 'lucide-react';
+import SubmitButton from '@/components/common/SubmitButton';
 
-// Define the shape of the props
 interface LoginFormProps {
   action: (formData: FormData) => Promise<void>;
 }
@@ -43,9 +43,14 @@ export default function LoginForm({ action }: LoginFormProps) {
                 </button>
             </div>
           </div>
-          <button type="submit" className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition shadow-lg shadow-indigo-500/30">
-            Sign In / Register
-          </button>
+          
+          <SubmitButton 
+             className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition shadow-lg shadow-indigo-500/30"
+             loadingText="Signing In..."
+             icon={LogIn}
+          >
+             Sign In / Register
+          </SubmitButton>
         </form>
     );
 }
