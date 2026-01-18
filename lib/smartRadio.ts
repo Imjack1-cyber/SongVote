@@ -6,7 +6,7 @@ export interface CandidateSong {
     artist: string;
     albumArtUrl: string | null;
     playCount: number;
-    reactionCount: number;
+    reactionCount: number; // This is the primary metric boosted by the Graph
 }
 
 export interface HistoryItem {
@@ -17,8 +17,14 @@ const COOLDOWN_HISTORY_LIMIT = 15; // Don't play songs from the last 15 tracks
 const BASE_WEIGHT = 1.0;
 
 /**
- * Calculates the engagement score for a track.
+ * Calculates the probability score for a track.
  * Formula: Base + (PlayCount * 0.05) + (ReactionCount * 0.15)
+ * 
+ * Context:
+ * - Graph Associations inject an artificial boost into 'ReactionCount'.
+ * - If Graph Weight is 5, ReactionCount increases by 10.
+ * - This results in +1.5 added to the Weight Score (10 * 0.15).
+ * - This significantly increases the chance of selection vs random tracks.
  */
 function calculateSongWeight(song: CandidateSong): number {
     const playWeight = song.playCount * 0.05;
@@ -30,7 +36,7 @@ function calculateSongWeight(song: CandidateSong): number {
 
 /**
  * The Smart Radio Engine.
- * Selects the next song using a weighted probability algorithm based on user engagement.
+ * Selects the next song using a weighted probability algorithm.
  */
 export function selectSmartTrack(
     sessionId: string,
@@ -47,8 +53,7 @@ export function selectSmartTrack(
     // 2. FILTER CANDIDATES
     let validPool = candidates.filter(song => !recentIds.has(song.id));
 
-    // FAILSAFE: If the playlist is very small and everything is on cooldown, 
-    // ignore the cooldown rules rather than stopping the music.
+    // FAILSAFE: If the pool is exhausted due to cooldowns, ignore cooldowns.
     if (validPool.length === 0) {
         logger.warn({ 
             sessionId, 
@@ -57,7 +62,7 @@ export function selectSmartTrack(
         validPool = candidates;
     }
 
-    // EDGE CASE: If the pool has exactly 1 song, just return it.
+    // EDGE CASE: Exact match
     if (validPool.length === 1) return validPool[0];
 
     // 3. SCORE CANDIDATES
@@ -83,14 +88,14 @@ export function selectSmartTrack(
         }
     }
 
-    // Failsafe in case of floating point precision errors
+    // Failsafe for floating point precision
     if (!selectedSong) {
-        selectedSong = weightedPool[weightedPool.length - 1].song;
-        selectedWeight = weightedPool[weightedPool.length - 1].weight;
+        const lastItem = weightedPool[weightedPool.length - 1];
+        selectedSong = lastItem.song;
+        selectedWeight = lastItem.weight;
     }
 
     // 5. OBSERVABILITY
-    // Log the decision-making data for debugging/analytics
     logger.info({
         source: 'smart_radio',
         sessionId,
@@ -100,8 +105,7 @@ export function selectSmartTrack(
             poolSize: validPool.length,
             totalWeight: parseFloat(totalWeight.toFixed(2)),
             winningWeight: parseFloat(selectedWeight.toFixed(2)),
-            playCount: selectedSong.playCount,
-            reactionCount: selectedSong.reactionCount
+            graphBoost: selectedSong.reactionCount // Logs the boosted value
         }
     }, 'Smart Radio Track Selected');
 

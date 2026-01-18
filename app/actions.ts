@@ -448,7 +448,10 @@ export async function updateSessionRules(formData: FormData) {
   const enableReactions = formData.get('enableReactions') === 'on';
   const enableDuplicateCheck = formData.get('enableDuplicateCheck') === 'on';
   const enableRegionCheck = formData.get('enableRegionCheck') === 'on';
-  const enableInfiniteFlow = formData.get('enableInfiniteFlow') === 'on'; // NEW: Plan 1
+  
+  // Handle Discovery Mode Enum
+  // This effectively ignores the old boolean checkbox if present, favoring the enum
+  const discoveryMode = formData.get('discoveryMode') as 'NONE' | 'YOUTUBE' | 'ASSOCIATION' || 'NONE';
 
   let cleanedPlaylistId = null;
   if (backupPlaylistId) {
@@ -466,11 +469,11 @@ export async function updateSessionRules(formData: FormData) {
         backupPlaylistId: cleanedPlaylistId, backupCollectionId: backupCollectionId || null, 
         autoAddToCollectionId: autoAddToCollectionId || null, 
         enableReactions, enableDuplicateCheck, enableRegionCheck,
-        enableInfiniteFlow 
+        discoveryMode // Saving the Enum
     }
   });
   if (cleanedPlaylistId) { await redis.del(`radio_playlist:${cleanedPlaylistId}`); }
-  logger.info({ userId: user.userId, sessionId }, 'Session Rules Updated');
+  logger.info({ userId: user.userId, sessionId, discoveryMode }, 'Session Rules Updated');
   revalidatePath(`/${user.username}/${sessionId}/settings`);
 }
 

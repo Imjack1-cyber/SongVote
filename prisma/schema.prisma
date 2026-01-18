@@ -66,7 +66,8 @@ model VoteSession {
   enableReactions      Boolean @default(false) 
   enableDuplicateCheck Boolean @default(true)
   enableRegionCheck    Boolean @default(true)
-  enableInfiniteFlow   Boolean @default(false) // New: Plan 1 Feature Flag
+  
+  discoveryMode        DiscoveryMode @default(NONE)
 
   defaultPermissions  Json?   
 
@@ -99,7 +100,6 @@ model GuestAccount {
   permissions   Json?
   votes         QueueItem[]
   
-  // Link to chat
   liveChat      LiveChatSession?
 }
 
@@ -115,6 +115,23 @@ model Song {
   cachedAt    DateTime @default(now())
   queueItems  QueueItem[]
   collectionItems CollectionItem[]
+  
+  associationsAsSource SongAssociation[] @relation("SourceSong")
+  associationsAsTarget SongAssociation[] @relation("TargetSong")
+}
+
+model SongAssociation {
+  sourceSongId String
+  sourceSong   Song   @relation("SourceSong", fields: [sourceSongId], references: [id])
+  
+  targetSongId String
+  targetSong   Song   @relation("TargetSong", fields: [targetSongId], references: [id])
+  
+  weight       Int    @default(1) 
+  updatedAt    DateTime @updatedAt
+
+  @@id([sourceSongId, targetSongId]) 
+  @@index([sourceSongId, weight])    
 }
 
 model QueueItem {
@@ -160,10 +177,8 @@ model Blacklist {
   id        String   @id @default(uuid())
   hostId    String
   host      Host     @relation(fields: [hostId], references: [id])
-  
   type      BlacklistType 
   value     String        
-  
   createdAt DateTime @default(now())
 }
 
@@ -230,6 +245,12 @@ enum QueueStatus {
   PLAYING
   PLAYED
   REJECTED
+}
+
+enum DiscoveryMode {
+  NONE
+  YOUTUBE
+  ASSOCIATION
 }
 
 enum BlacklistType {

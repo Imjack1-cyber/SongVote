@@ -13,6 +13,7 @@ import { jwtVerify } from 'jose';
 import { getPlaylistItems, searchYouTube, YouTubeSearchResult, getRelatedVideos } from './lib/youtube';
 import { logger } from './lib/logger';
 import { selectSmartTrack, CandidateSong } from './lib/smartRadio';
+import { recordAssociation, getAssociatedTracks } from './lib/associationGraph';
 
 const prisma = new PrismaClient();
 
@@ -149,7 +150,7 @@ const handleAutoAdd = async (sessionId: string, songId: string) => {
     } catch (e) { logger.error({ err: e, sessionId, songId }, "Auto-Add Context Error"); }
 };
 
-// --- SMART RADIO LOGIC (PHASE 3 INTEGRATION) ---
+// --- SMART RADIO LOGIC ---
 const playRadioSong = async (sessionId: string) => {
     logger.info({ sessionId }, 'Attempting Radio Play');
     
@@ -231,7 +232,7 @@ const playRadioSong = async (sessionId: string) => {
             distinct: ['songId'],
             select: { song: true },
             orderBy: { updatedAt: 'desc' },
-            take: 100 // Look back deeper for variety
+            take: 100 
         });
         
         candidates = historyItems.map(i => ({
@@ -244,8 +245,9 @@ const playRadioSong = async (sessionId: string) => {
         }));
     }
 
-    // --- INFINITE FLOW INJECTION (NEW PLAN 1) ---
-    if (session.enableInfiniteFlow) {
+    // --- DISCOVERY MODE INJECTION ---
+    // If the Discovery Mode is active, inject suggestions based on the last played song
+    if (session.discoveryMode !== 'NONE') {
         const lastPlayed = await prisma.queueItem.findFirst({
             where: { voteSessionId: sessionId, status: 'PLAYED' },
             orderBy: { updatedAt: 'desc' },
@@ -254,31 +256,48 @@ const playRadioSong = async (sessionId: string) => {
 
         if (lastPlayed) {
             try {
-                // Fetch related videos (Cached indefinitely via Lib)
-                const related = await getRelatedVideos(lastPlayed.songId, session.hostId);
-                
-                // Track existing IDs to prevent overriding "Real" playlist items with "Generic" suggestions
+                let suggestions: CandidateSong[] = [];
                 const existingIds = new Set(candidates.map(c => c.id));
+
+                // BRANCH A: Internal Graph (Community Intelligence)
+                if (session.discoveryMode === 'ASSOCIATION') {
+                    // Fetch top 5 associated tracks from DB
+                    suggestions = await getAssociatedTracks(lastPlayed.songId, 5);
+                }
                 
-                related.forEach(r => {
-                    if (!existingIds.has(r.id)) {
-                        candidates.push({
-                            id: r.id,
-                            title: r.title,
-                            artist: r.artist,
-                            albumArtUrl: r.albumArtUrl,
-                            playCount: 0,
-                            // Give them a "Freshness Bonus" (Weight ~1.3) so they compete with base songs
-                            reactionCount: 2 
-                        });
+                // BRANCH B: External AI (YouTube Algorithm)
+                else if (session.discoveryMode === 'YOUTUBE') {
+                    // Fetch related videos from API
+                    const related = await getRelatedVideos(lastPlayed.songId, session.hostId);
+                    suggestions = related.map(r => ({
+                        id: r.id,
+                        title: r.title,
+                        artist: r.artist,
+                        albumArtUrl: r.albumArtUrl,
+                        playCount: 0,
+                        // Give them a "Freshness Bonus" (Weight ~1.3) so they compete with base songs
+                        reactionCount: 2 
+                    }));
+                }
+
+                // MERGE Logic
+                suggestions.forEach(s => {
+                    // Prevent dupes if the song is already in the backup playlist
+                    if (!existingIds.has(s.id)) {
+                        candidates.push(s);
+                        existingIds.add(s.id); 
                     }
                 });
-                
-                if (related.length > 0) {
-                    logger.info({ sessionId, count: related.length }, 'Infinite Flow: Injected Suggestions');
+
+                if (suggestions.length > 0) {
+                    logger.info({ 
+                        sessionId, 
+                        mode: session.discoveryMode, 
+                        count: suggestions.length 
+                    }, 'Smart Radio: Discovery Suggestions Injected');
                 }
             } catch (e) {
-                logger.error({ err: e, sessionId }, 'Infinite Flow Injection Failed');
+                logger.error({ err: e, sessionId, mode: session.discoveryMode }, 'Smart Radio Discovery Injection Failed');
             }
         }
     }
@@ -291,16 +310,16 @@ const playRadioSong = async (sessionId: string) => {
         select: { songId: true }
     });
 
-    // 7. Execute Smart Selection
+    // 7. Execute Smart Selection (Weighted Probability)
     const selectedSong = selectSmartTrack(sessionId, candidates, recentHistory);
 
     if (!selectedSong) {
-        logger.warn({ sessionId }, 'Radio failed to select a track (No candidates)');
+        logger.warn({ sessionId }, 'Radio failed to select a track (No candidates available)');
         return null; 
     }
 
     // 8. Queue the Winner
-    // Ensure Song exists in DB (needed if coming fresh from a Playlist or Infinite Flow)
+    // Ensure Song exists in DB (needed if coming fresh from YouTube Discovery or Playlist)
     await prisma.song.upsert({
         where: { id: selectedSong.id },
         update: {},
@@ -534,7 +553,7 @@ app.prepare().then(() => {
         } catch (e) { logger.error({ err: e, sessionId, guestId }, "Chat Error"); }
     });
 
-    // --- REACTION HANDLER (UPDATED FOR SMART RADIO) ---
+    // --- REACTION HANDLER ---
     socket.on('send-reaction', async (rawPayload) => {
         const result = ReactionSchema.safeParse(rawPayload);
         if (!result.success) return;
@@ -700,23 +719,47 @@ app.prepare().then(() => {
         if (!voterId || !(await checkPermission(sessionId, voterId, 'controlPlayer'))) return;
         try {
             const ops = [];
+            let prevSongId = null;
+            let nextSongId = null;
+
+            // 1. Mark Previous as PLAYED
             if (prevId) {
                 const prevItem = await prisma.queueItem.findUnique({ where: { id: prevId } });
                 if (prevItem) {
+                    prevSongId = prevItem.songId;
                     await prisma.song.update({ where: { id: prevItem.songId }, data: { playCount: { increment: 1 } } });
                     handleAutoAdd(sessionId, prevItem.songId);
                     if (prevItem.suggestedByGuestId) await prisma.guestAccount.update({ where: { id: prevItem.suggestedByGuestId }, data: { karma: { increment: 10 } }});
                 }
                 ops.push(prisma.queueItem.update({ where: { id: prevId }, data: { status: 'PLAYED' } }));
             }
+
+            // 2. Mark Next as PLAYING
             let newPlayingId = nextId;
-            if (nextId) ops.push(prisma.queueItem.update({ where: { id: nextId }, data: { status: 'PLAYING' } }));
+            if (nextId) {
+                const nextItem = await prisma.queueItem.findUnique({ where: { id: nextId } });
+                if (nextItem) nextSongId = nextItem.songId;
+                ops.push(prisma.queueItem.update({ where: { id: nextId }, data: { status: 'PLAYING' } }));
+            }
+            
             if (ops.length > 0) await prisma.$transaction(ops);
+
+            // --- ASSOCIATION LEARNING (Data Ingestion) ---
+            // Trigger background task to record the transition in the graph
+            if (prevSongId && nextSongId) {
+                recordAssociation(prevSongId, nextSongId).catch(err => {
+                    logger.error({ err, source: 'learning_graph' }, 'Association recording failed');
+                });
+            }
+
+            // 3. Fallback: If no song selected, use Radio Mode
             if (!newPlayingId) newPlayingId = await playRadioSong(sessionId);
+            
             if (newPlayingId) {
                 const song = await prisma.queueItem.findUnique({ where: { id: newPlayingId }, select: { songId: true }});
                 if(song) await setPlaybackState(sessionId, { status: 'playing', videoId: song.songId, startTime: Date.now(), timestamp: Date.now() });
             } else { await redis.del(`session_playback:${sessionId}`); }
+            
             await broadcastState(io, sessionId);
         } catch (e) { logger.error({ err: e, sessionId }, "Transition Error"); }
     });

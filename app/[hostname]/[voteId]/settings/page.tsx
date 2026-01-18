@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { updateSessionRules, generateGuests } from '@/app/actions';
-import { Clock, Users, AlertTriangle, CheckCircle, Radio, Save, ToggleLeft, Sparkles } from 'lucide-react';
+import { Clock, Users, AlertTriangle, CheckCircle, Radio, Save, ToggleLeft, Sparkles, Youtube, Network, Ban } from 'lucide-react';
 import Link from 'next/link';
 import GuestList from '@/components/host/GuestList';
 import SessionManager from '@/components/host/SessionManager';
@@ -144,28 +144,51 @@ export default async function VoteSettingsPage({ params }: { params: { hostname:
                                     </div>
                                 </div>
 
-                                {/* Infinite Flow Toggle (New) */}
-                                <div className="flex items-center justify-between p-3 border border-[var(--border)] rounded-lg bg-[var(--background)]">
-                                    <div>
-                                        <div className="flex items-center gap-2">
-                                            <label htmlFor="toggle-infinite" className="text-sm font-bold flex items-center gap-2">
-                                                <Sparkles className="w-4 h-4 text-purple-500" /> Infinite Flow
-                                            </label>
-                                            <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 rounded font-bold uppercase">New</span>
-                                        </div>
-                                        <p className="text-xs opacity-60 mt-1 max-w-[250px] leading-tight">
-                                            Let YouTube suggest related songs based on the vibe.
-                                            <br/>
-                                            <span className="text-red-500 font-bold">Warning: Uses High API Quota (100 units/song).</span>
-                                        </p>
+                                {/* Discovery Mode Selection (Plan 3) */}
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-[var(--accent)]" />
+                                        <h3 className="font-bold text-sm">Smart Discovery Mode</h3>
                                     </div>
-                                    <input 
-                                        id="toggle-infinite" 
-                                        type="checkbox" 
-                                        name="enableInfiniteFlow" 
-                                        defaultChecked={session.enableInfiniteFlow} 
-                                        className="w-5 h-5 accent-purple-500" 
-                                    />
+                                    <div className="grid md:grid-cols-3 gap-3">
+                                        
+                                        {/* Option 1: None */}
+                                        <label className="cursor-pointer relative">
+                                            <input type="radio" name="discoveryMode" value="NONE" defaultChecked={session.discoveryMode === 'NONE'} className="peer sr-only" />
+                                            <div className="p-4 rounded-xl border border-[var(--border)] peer-checked:border-[var(--accent)] peer-checked:bg-[var(--accent)]/5 hover:bg-[var(--foreground)]/5 transition h-full flex flex-col items-center text-center gap-2">
+                                                <Ban className="w-5 h-5 opacity-50" />
+                                                <span className="font-bold text-sm">Closed Loop</span>
+                                                <p className="text-[10px] opacity-60 leading-tight">
+                                                    Only play songs from your backup playlist or history. No external suggestions.
+                                                </p>
+                                            </div>
+                                        </label>
+
+                                        {/* Option 2: Association (Internal) */}
+                                        <label className="cursor-pointer relative">
+                                            <input type="radio" name="discoveryMode" value="ASSOCIATION" defaultChecked={session.discoveryMode === 'ASSOCIATION'} className="peer sr-only" />
+                                            <div className="p-4 rounded-xl border border-[var(--border)] peer-checked:border-purple-500 peer-checked:bg-purple-500/5 hover:bg-[var(--foreground)]/5 transition h-full flex flex-col items-center text-center gap-2">
+                                                <Network className="w-5 h-5 text-purple-500" />
+                                                <span className="font-bold text-sm text-purple-600">Community Graph</span>
+                                                <p className="text-[10px] opacity-60 leading-tight">
+                                                    AI learns from song transitions to suggest tracks users naturally queue together.
+                                                </p>
+                                            </div>
+                                        </label>
+
+                                        {/* Option 3: YouTube (External) */}
+                                        <label className="cursor-pointer relative">
+                                            <input type="radio" name="discoveryMode" value="YOUTUBE" defaultChecked={session.discoveryMode === 'YOUTUBE'} className="peer sr-only" />
+                                            <div className="p-4 rounded-xl border border-[var(--border)] peer-checked:border-red-500 peer-checked:bg-red-500/5 hover:bg-[var(--foreground)]/5 transition h-full flex flex-col items-center text-center gap-2">
+                                                <Youtube className="w-5 h-5 text-red-500" />
+                                                <span className="font-bold text-sm text-red-600">YouTube Brain</span>
+                                                <p className="text-[10px] opacity-60 leading-tight">
+                                                    Use Google's algorithm to find related tracks. 
+                                                    <br/><strong className="text-red-500">Warning: High API Usage.</strong>
+                                                </p>
+                                            </div>
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
 
