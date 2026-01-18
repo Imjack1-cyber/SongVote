@@ -14,6 +14,7 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
 *   **Easy Access:** Guests join via QR code or PIN—no registration required.
 *   **Zero-Delay Playback:** Smart pre-loading ensures music never stops.
 *   **SuperAdmin Dashboard:** A "God View" for platform owners to monitor total hosts, active sessions, and voting activity across the entire instance.
+*   **PWA & Mobile:** Installable on iOS/Android. Native haptics and hardware integrations.
 
 ## 🛠️ Tech Stack
 
@@ -21,6 +22,7 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
 *   **Server:** Node.js Custom Server + Socket.IO
 *   **Database:** PostgreSQL (via Prisma ORM)
 *   **Cache & State:** Redis
+*   **Mobile:** Capacitor 5 + Native Plugins
 *   **Styling:** Tailwind CSS + Lucide Icons
 
 ## 🚀 Getting Started
@@ -29,6 +31,7 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
 *   Node.js (v18+)
 *   PostgreSQL
 *   Redis
+*   Android Studio (for Mobile Builds)
 
 ### Installation
 
@@ -74,6 +77,28 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
     npm run dev
     ```
     Open [http://localhost:3000](http://localhost:3000) to see the app.
+
+## 📱 Mobile Development
+
+SongVote uses Capacitor to wrap the Next.js app in a native Android shell.
+
+1.  **Initialize Android Project**
+    ```bash
+    npx cap add android
+    ```
+
+2.  **Sync Web Assets**
+    ```bash
+    npm run build
+    npx cap sync
+    ```
+
+3.  **Run in Emulator**
+    ```bash
+    npx cap open android
+    ```
+    *   Click the "Play" button in Android Studio to launch the emulator.
+    *   **Note:** Ensure `capacitor.config.ts` has `server.url` set to your dev machine's IP (or `10.0.2.2` for emulator localhost access) for live reloading.
 
 ## 📖 How to Use
 

@@ -10,6 +10,14 @@
     "db:push": "prisma db push"
   },
   "dependencies": {
+    "@capacitor-community/keep-awake": "^8.0.0",
+    "@capacitor/android": "^8.0.1",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/cli": "^8.0.1",
+    "@capacitor/core": "^8.0.1",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/ios": "^8.0.1",
+    "@ducanh2912/next-pwa": "^10.2.9",
     "@prisma/client": "^5.10.0",
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.0",
@@ -32,6 +40,7 @@
     "react-to-print": "^3.2.0",
     "react-youtube": "^10.1.0",
     "recharts": "^3.6.0",
+    "sharp": "^0.34.5",
     "socket.io": "^4.7.4",
     "socket.io-client": "^4.7.4",
     "sonner": "^2.0.7",

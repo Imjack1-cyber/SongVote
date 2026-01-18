@@ -3,6 +3,7 @@
 import { ThumbsUp, Music, Check, Trash2, Ban } from 'lucide-react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNative } from '@/hooks/useNative'; 
 
 // Helper to safely decode HTML entities without heavy DOM parsing
 const decodeHtmlEntities = (str: string) => {
@@ -24,6 +25,14 @@ interface QueueListProps {
 }
 
 export default function QueueList({ items, onToggle, selectedIds, submittedIds, isHost, onRemove, onBan }: QueueListProps) {
+  const { vibrate } = useNative(); // Native Hook
+
+  const handleToggle = (id: string) => {
+      // Trigger haptic feedback on interaction
+      vibrate();
+      onToggle(id);
+  };
+
   if (items.length === 0) {
     return (
         <div className="card min-h-[300px] flex flex-col items-center justify-center p-8 text-center border-dashed border-2 border-[var(--border)] bg-[var(--background)]">
@@ -54,7 +63,7 @@ export default function QueueList({ items, onToggle, selectedIds, submittedIds, 
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ duration: 0.3 }}
-                onClick={() => !isSubmitted && onToggle(item.id)}
+                onClick={() => !isSubmitted && handleToggle(item.id)}
                 className={`card p-4 flex items-center justify-between group transition-all relative overflow-hidden cursor-pointer
                     ${isSelected ? 'border-[var(--accent)] bg-[var(--accent)]/5' : 'hover:border-[var(--border)]'}
                     ${isSubmitted ? 'opacity-70 grayscale' : ''}

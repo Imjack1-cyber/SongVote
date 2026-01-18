@@ -1,6 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
-import { prisma } from './db';
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret');
 const ALG = 'HS256';
@@ -32,13 +31,11 @@ export async function getCurrentUser() {
 export async function loginUser(userId: string, username: string) {
   const token = await signSession({ userId, username });
   
-  // Determine if we are using HTTPS (Production OR Tunnel)
-  const isSecure = process.env.NODE_ENV === 'production' || 
-                   process.env.NEXT_PUBLIC_APP_URL?.startsWith('https');
+  const isSecure = process.env.NEXT_PUBLIC_APP_URL?.startsWith('https') ?? false;
 
   cookies().set('session_token', token, {
     httpOnly: true,
-    secure: isSecure, // Critical for Ngrok/HTTPS
+    secure: isSecure, 
     sameSite: 'lax',
     path: '/',
   });

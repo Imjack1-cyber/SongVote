@@ -1,9 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import "./globals.css";
 import GlobalBanner from "@/components/common/GlobalBanner";
 import ProgressBarProvider from "@/components/providers/ProgressBarProvider";
+import AppNativeProvider from "@/components/providers/AppNativeProvider";
 import { getGlobalAnnouncement } from "@/app/actions"; 
 
 const inter = Inter({ subsets: ["latin"] });
@@ -11,6 +12,20 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "SongVote",
   description: "Real-time song voting platform",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "SongVote",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false, // Prevents pinch-zoom for native app feel
+  viewportFit: "cover", // Handles notches on phones
 };
 
 export default async function RootLayout({
@@ -27,14 +42,17 @@ export default async function RootLayout({
         {/* Navigation Progress Bar */}
         <ProgressBarProvider />
         
-        {/* Global Alert Banner */}
-        <GlobalBanner initialData={initialAnnouncement} />
-        
-        {/* Main Content (Wrapped in template.tsx automatically by Next.js) */}
-        {children}
-        
-        {/* Toast Notifications */}
-        <Toaster position="top-center" richColors theme="system" /> 
+        {/* Native Hooks (Back Button Handler) */}
+        <AppNativeProvider>
+          {/* Global Alert Banner */}
+          <GlobalBanner initialData={initialAnnouncement} />
+          
+          {/* Main Content (Wrapped in template.tsx automatically by Next.js) */}
+          {children}
+          
+          {/* Toast Notifications */}
+          <Toaster position="top-center" richColors theme="system" /> 
+        </AppNativeProvider>
       </body>
     </html>
   );

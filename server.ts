@@ -27,7 +27,6 @@ redis.on('error', (err) => {
 // --- REDIS SUBSCRIBER ---
 const redisSub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
-// Subscribing to channels
 redisSub.subscribe('global_announcements', 'admin_channel', 'ticket_updates', (err) => {
     if (err) {
         logger.error({ err, source: 'redis_sub' }, 'Failed to subscribe to channels');
@@ -38,7 +37,10 @@ redisSub.subscribe('global_announcements', 'admin_channel', 'ticket_updates', (e
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
-const port = 3000;
+
+// CHANGE: Default to Port 80. 
+// WARNING: You must run terminal as Administrator/Root to bind to port 80.
+const port = parseInt(process.env.PORT || '80', 10);
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
@@ -203,7 +205,6 @@ const playRadioSong = async (sessionId: string) => {
         }
 
         if (playlistItems.length > 0) {
-            // Fetch stats for these songs from DB to enable weighting
             const songIds = playlistItems.map(p => p.id);
             const knownSongs = await prisma.song.findMany({
                 where: { id: { in: songIds } },
@@ -246,7 +247,6 @@ const playRadioSong = async (sessionId: string) => {
     }
 
     // --- DISCOVERY MODE INJECTION ---
-    // If the Discovery Mode is active, inject suggestions based on the last played song
     if (session.discoveryMode !== 'NONE') {
         const lastPlayed = await prisma.queueItem.findFirst({
             where: { voteSessionId: sessionId, status: 'PLAYED' },
@@ -259,15 +259,10 @@ const playRadioSong = async (sessionId: string) => {
                 let suggestions: CandidateSong[] = [];
                 const existingIds = new Set(candidates.map(c => c.id));
 
-                // BRANCH A: Internal Graph (Community Intelligence)
                 if (session.discoveryMode === 'ASSOCIATION') {
-                    // Fetch top 5 associated tracks from DB
                     suggestions = await getAssociatedTracks(lastPlayed.songId, 5);
                 }
-                
-                // BRANCH B: External AI (YouTube Algorithm)
                 else if (session.discoveryMode === 'YOUTUBE') {
-                    // Fetch related videos from API
                     const related = await getRelatedVideos(lastPlayed.songId, session.hostId);
                     suggestions = related.map(r => ({
                         id: r.id,
@@ -275,14 +270,11 @@ const playRadioSong = async (sessionId: string) => {
                         artist: r.artist,
                         albumArtUrl: r.albumArtUrl,
                         playCount: 0,
-                        // Give them a "Freshness Bonus" (Weight ~1.3) so they compete with base songs
                         reactionCount: 2 
                     }));
                 }
 
-                // MERGE Logic
                 suggestions.forEach(s => {
-                    // Prevent dupes if the song is already in the backup playlist
                     if (!existingIds.has(s.id)) {
                         candidates.push(s);
                         existingIds.add(s.id); 
@@ -290,11 +282,7 @@ const playRadioSong = async (sessionId: string) => {
                 });
 
                 if (suggestions.length > 0) {
-                    logger.info({ 
-                        sessionId, 
-                        mode: session.discoveryMode, 
-                        count: suggestions.length 
-                    }, 'Smart Radio: Discovery Suggestions Injected');
+                    logger.info({ sessionId, mode: session.discoveryMode, count: suggestions.length }, 'Smart Radio: Discovery Suggestions Injected');
                 }
             } catch (e) {
                 logger.error({ err: e, sessionId, mode: session.discoveryMode }, 'Smart Radio Discovery Injection Failed');
@@ -310,7 +298,7 @@ const playRadioSong = async (sessionId: string) => {
         select: { songId: true }
     });
 
-    // 7. Execute Smart Selection (Weighted Probability)
+    // 7. Execute Smart Selection
     const selectedSong = selectSmartTrack(sessionId, candidates, recentHistory);
 
     if (!selectedSong) {
@@ -319,7 +307,6 @@ const playRadioSong = async (sessionId: string) => {
     }
 
     // 8. Queue the Winner
-    // Ensure Song exists in DB (needed if coming fresh from YouTube Discovery or Playlist)
     await prisma.song.upsert({
         where: { id: selectedSong.id },
         update: {},
@@ -369,9 +356,7 @@ app.prepare().then(() => {
         const parsedUrl = parse(req.url!, true);
         await handle(req, res, parsedUrl);
         
-        // --- LOG SUCCESSFUL REQUEST ---
         const duration = Date.now() - start;
-        // Ignore static assets/next-internals to keep logs clean in prod
         if (!req.url?.startsWith('/_next') && !req.url?.startsWith('/favicon')) {
             logger.info({ 
                 method: req.method, 
@@ -393,7 +378,6 @@ app.prepare().then(() => {
     cors: { origin: '*' }
   });
 
-  // --- PUB/SUB DISPATCHER ---
   redisSub.on('message', (channel, message) => {
     try {
         const data = JSON.parse(message);
@@ -403,25 +387,12 @@ app.prepare().then(() => {
             io.emit('global-announcement', data);
         } 
         else if (channel === 'admin_channel') {
-            // General admin updates (like feedback)
             io.to('admin-room').emit('admin-update', data);
         }
         else if (channel === 'ticket_updates') {
-            
-            // 1. Live Chat Room Update
-            if (data.ticketId) {
-                io.to(`ticket:${data.ticketId}`).emit('ticket-update', data);
-            }
-
-            // 2. Admin Notification
-            if (data.notifyAdmin) {
-                io.to('admin-room').emit('admin-notification', data);
-            }
-            
-            // 3. User Notification
-            if (data.notifyUser && data.targetUserId) {
-                io.to(`user:${data.targetUserId}`).emit('ticket-notification', data);
-            }
+            if (data.ticketId) io.to(`ticket:${data.ticketId}`).emit('ticket-update', data);
+            if (data.notifyAdmin) io.to('admin-room').emit('admin-notification', data);
+            if (data.notifyUser && data.targetUserId) io.to(`user:${data.targetUserId}`).emit('ticket-notification', data);
         }
     } catch (e) {
         logger.error({ err: e, channel, message }, "Redis Pub/Sub Dispatch Error");
@@ -430,18 +401,12 @@ app.prepare().then(() => {
 
   io.on('connection', async (socket) => {
     redis.incr('system:active_connections');
-    
-    // Log connection with ID
     logger.info({ socketId: socket.id, ip: socket.handshake.address }, 'Socket Connected');
 
-    // --- AUTO-JOIN ROOMS BASED ON AUTH ---
     const userId = await getUserIdFromSocket(socket);
     if (userId) {
-        // 1. Join Personal Room
         socket.join(`user:${userId}`);
         logger.debug({ socketId: socket.id, userId }, 'User Authenticated & Joined Personal Room');
-
-        // 2. Auto-Join Admin Room if SuperAdmin
         if (userId === process.env.SUPER_ADMIN_ID) {
             socket.join('admin-room');
             logger.info({ socketId: socket.id, userId }, 'SuperAdmin Joined Admin Room');
@@ -453,23 +418,19 @@ app.prepare().then(() => {
         logger.debug({ socketId: socket.id }, 'Socket Disconnected');
     });
 
-    // --- EXPLICIT TICKET JOIN ---
     socket.on('join-ticket-room', async (ticketId) => {
         const socketUserId = await getUserIdFromSocket(socket);
         if (!socketUserId) return;
-        
         socket.join(`ticket:${ticketId}`);
         logger.debug({ socketId: socket.id, ticketId }, 'Joined Ticket Room');
     });
 
-    // --- JOIN ROOM ---
     socket.on('join-room', async (roomId) => {
       if (typeof roomId !== 'string' || roomId.length > 64) return;
       socket.join(roomId);
       try { await broadcastState(io, roomId); } catch (e) { logger.error({ err: e, roomId }, "Broadcast State Failed"); }
     });
 
-    // --- HOST ROOM ---
     socket.on('join-host-room', async (roomId) => {
       if (typeof roomId !== 'string' || roomId.length > 64) return;
       const socketUserId = await getUserIdFromSocket(socket);
@@ -504,7 +465,6 @@ app.prepare().then(() => {
       }
     });
 
-    // --- LIVE CHAT (Guest <-> Host) ---
     socket.on('join-live-chat', async ({ sessionId, guestId }) => {
         if (!sessionId || !guestId) return;
         socket.join(`live-chat:${sessionId}:${guestId}`);
@@ -553,48 +513,37 @@ app.prepare().then(() => {
         } catch (e) { logger.error({ err: e, sessionId, guestId }, "Chat Error"); }
     });
 
-    // --- REACTION HANDLER ---
     socket.on('send-reaction', async (rawPayload) => {
         const result = ReactionSchema.safeParse(rawPayload);
         if (!result.success) return;
         const { sessionId, type, voterId } = result.data;
         const limitId = voterId || socket.handshake.address;
         
-        // 1. Rate Limiting
         if (!(await checkRateLimit(`react:${limitId}`, 10, 5))) return;
 
-        // 2. Check Feature Flag
         const session = await prisma.voteSession.findUnique({ where: { id: sessionId }, select: { enableReactions: true }});
         if (!session?.enableReactions) return;
 
-        // 3. Broadcast Animation immediately (Optimistic UI)
         io.to(sessionId).emit('reaction', { type, id: Date.now() });
 
-        // 4. Update Database for Smart Radio (Async, non-blocking)
         try {
-            // Find current song
             const playingItem = await prisma.queueItem.findFirst({
                 where: { voteSessionId: sessionId, status: 'PLAYING' },
                 select: { id: true, songId: true }
             });
 
             if (playingItem) {
-                // Increment Specific Play Count
                 await prisma.queueItem.update({
                     where: { id: playingItem.id },
                     data: { reactionCount: { increment: 1 } }
                 });
-
-                // Increment Global Song Engagement
                 await prisma.song.update({
                     where: { id: playingItem.songId },
                     data: { reactionCount: { increment: 1 } }
                 });
-                
                 logger.debug({ sessionId, songId: playingItem.songId, type }, 'Reaction Persisted');
             }
         } catch (e) {
-            // Log but don't crash socket
             logger.error({ err: e, sessionId }, "Failed to persist reaction");
         }
     });
@@ -722,7 +671,6 @@ app.prepare().then(() => {
             let prevSongId = null;
             let nextSongId = null;
 
-            // 1. Mark Previous as PLAYED
             if (prevId) {
                 const prevItem = await prisma.queueItem.findUnique({ where: { id: prevId } });
                 if (prevItem) {
@@ -734,7 +682,6 @@ app.prepare().then(() => {
                 ops.push(prisma.queueItem.update({ where: { id: prevId }, data: { status: 'PLAYED' } }));
             }
 
-            // 2. Mark Next as PLAYING
             let newPlayingId = nextId;
             if (nextId) {
                 const nextItem = await prisma.queueItem.findUnique({ where: { id: nextId } });
@@ -744,15 +691,12 @@ app.prepare().then(() => {
             
             if (ops.length > 0) await prisma.$transaction(ops);
 
-            // --- ASSOCIATION LEARNING (Data Ingestion) ---
-            // Trigger background task to record the transition in the graph
             if (prevSongId && nextSongId) {
                 recordAssociation(prevSongId, nextSongId).catch(err => {
                     logger.error({ err, source: 'learning_graph' }, 'Association recording failed');
                 });
             }
 
-            // 3. Fallback: If no song selected, use Radio Mode
             if (!newPlayingId) newPlayingId = await playRadioSong(sessionId);
             
             if (newPlayingId) {

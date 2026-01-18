@@ -3,12 +3,13 @@
 import { 
     Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, 
     Maximize2, Minimize2, Zap, AlertCircle, Loader2, Music2,
-    Eye, EyeOff, RefreshCcw 
+    Eye, EyeOff, RefreshCcw, MonitorX, Laptop2 
 } from 'lucide-react';
-import { useState, useEffect, memo, useCallback } from 'react';
+import { useState, useEffect, memo, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useSocket } from '@/hooks/useSocket';
 import { clientLogger } from '@/lib/clientLogger';
+import { useNative } from '@/hooks/useNative'; 
 
 const YouTube = dynamic<any>(
     () => import('react-youtube').then((mod) => mod.default), 
@@ -70,6 +71,7 @@ function InternalPlayer({
 }: HostPlayerProps & { onHardReset: () => void }) {
 
   const { socket } = useSocket(voteId);
+  const { keepAwake, allowSleep } = useNative(); 
 
   const [player, setPlayer] = useState<any>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -84,6 +86,36 @@ function InternalPlayer({
   const [showForceInput, setShowForceInput] = useState(false);
   const [forceUrl, setForceUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  
+  const [isRestrictedDevice, setIsRestrictedDevice] = useState(false);
+
+  const hasErrorRef = useRef(false);
+
+  // --- DEVICE DETECTION ---
+  useEffect(() => {
+      if (typeof window !== 'undefined') {
+          const ua = window.navigator.userAgent || '';
+          
+          // 1. Detect Android
+          const isAndroid = /Android/i.test(ua);
+          
+          // 2. Detect iOS (iPhone, iPad, iPod)
+          const isiOS = /iPhone|iPad|iPod/i.test(ua);
+          
+          // 3. Detect iPadOS 13+ (Reports as MacIntel but has touch points)
+          const isiPadOS = window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1;
+
+          if (isAndroid || isiOS || isiPadOS) {
+              setIsRestrictedDevice(true);
+          }
+      }
+  }, []);
+
+  // --- NATIVE SCREEN AWAKE ---
+  useEffect(() => {
+      keepAwake();
+      return () => { allowSleep(); };
+  }, [keepAwake, allowSleep]);
 
   // --- AUTO START ---
   useEffect(() => {
@@ -92,7 +124,24 @@ function InternalPlayer({
       }
   }, [currentSong, nextUp, onSongStarted]);
 
-  useEffect(() => { setError(null); }, [currentSong?.id]);
+  useEffect(() => { 
+      setError(null); 
+      hasErrorRef.current = false; 
+  }, [currentSong?.id]);
+
+  // --- PLAYER OPTIONS ---
+  const playerOpts = useMemo(() => ({
+      height: '100%',
+      width: '100%',
+      playerVars: { 
+          autoplay: 1, 
+          controls: 0, // Hiding native controls as requested
+          modestbranding: 1, 
+          rel: 0,
+          playsinline: 1, 
+          origin: typeof window !== 'undefined' ? window.location.origin : undefined
+      }
+  }), []);
 
   // --- SYNC ---
   useEffect(() => {
@@ -148,7 +197,7 @@ function InternalPlayer({
   const onReady = (event: any) => {
     const p = event.target;
     setPlayer(p);
-    p.setVolume(volume);
+    try { p.setVolume(volume); } catch(e) {}
     
     if (initialSyncState && initialSyncState.videoId === currentSong?.songId) {
         const now = Date.now();
@@ -166,26 +215,35 @@ function InternalPlayer({
   };
 
   const onStateChange = (event: any) => {
-    // 1 = Playing, 2 = Paused
-    if (event.data === 1) {
+    if (event.data === 1) { // Playing
         setIsPlaying(true);
         broadcastStatus('playing');
+        setError(null);
+        hasErrorRef.current = false;
     }
-    if (event.data === 2) {
+    if (event.data === 2) { // Paused
         setIsPlaying(false);
         broadcastStatus('paused');
     }
   };
 
   const onError = (event: any) => {
-      // 100 = Not Found, 101/150 = Embedding Disabled
-      clientLogger.error('YouTube Player Error', { errorCode: event.data, videoId: currentSong?.songId, voteId });
-      
-      if ([100, 101, 150].includes(event.data)) {
-          setError("Video unavailable. Skipping...");
-          setTimeout(() => handleSkip(), 3000);
-      } else {
-          setError("Playback Error");
+      const code = event.data;
+      clientLogger.error('YouTube Player Error', { errorCode: code, videoId: currentSong?.songId, voteId });
+      hasErrorRef.current = true;
+      setError("Playback Error. Tap Play to Retry.");
+  };
+
+  const handleVideoEnd = () => {
+      if (hasErrorRef.current) return;
+      if (currentSong) onSongEnded(currentSong.id);
+  };
+
+  const handleManualRetry = () => {
+      if (player && currentSong) {
+          setError(null);
+          hasErrorRef.current = false;
+          player.loadVideoById(currentSong.songId);
       }
   };
 
@@ -207,7 +265,11 @@ function InternalPlayer({
 
   const togglePlay = () => {
     if (!player) return;
-    isPlaying ? player.pauseVideo() : player.playVideo();
+    if (error) {
+        handleManualRetry();
+    } else {
+        isPlaying ? player.pauseVideo() : player.playVideo();
+    }
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -241,6 +303,24 @@ function InternalPlayer({
       const s = Math.floor(seconds % 60);
       return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
+
+  // --- RESTRICT MOBILE DEVICES ---
+  if (isRestrictedDevice) {
+      return (
+          <div className="card p-8 mb-8 flex flex-col items-center justify-center text-center bg-amber-50 border-amber-200">
+              <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4">
+                  <MonitorX className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold text-amber-900 mb-2">Desktop Required</h3>
+              <p className="text-amber-800 text-sm max-w-sm leading-relaxed mb-4">
+                  Due to copyright restrictions imposed by the artist, embedding YouTube videos is not supported on mobile devices.
+              </p>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-700 bg-amber-100/50 px-3 py-1.5 rounded-full">
+                  <Laptop2 className="w-4 h-4" /> Use Windows (tested) / macOS / Linux
+              </div>
+          </div>
+      );
+  }
 
   const activeSong = currentSong || nextUp;
   const isTransitioning = !currentSong && !!nextUp;
@@ -276,36 +356,47 @@ function InternalPlayer({
     <div id="host-player" className="card p-0 mb-8 overflow-hidden shadow-xl border border-[var(--border)] bg-[var(--surface)] transition-all duration-500 relative">
       
       <div className={`relative bg-black transition-all duration-500 ease-in-out overflow-hidden ${!isVideoVisible ? 'h-0 opacity-0' : (isVideoExpanded ? 'aspect-video' : 'h-24 sm:h-32')}`}>
-        <div className="absolute inset-0">
+        <div className="absolute inset-0 z-0">
              <YouTube
                 videoId={activeSong.songId}
-                opts={{
-                    height: '100%',
-                    width: '100%',
-                    playerVars: { 
-                        autoplay: 1, 
-                        controls: 0, 
-                        modestbranding: 1, 
-                        rel: 0,
-                        origin: typeof window !== 'undefined' ? window.location.origin : undefined
-                    }
-                }}
+                opts={playerOpts}
                 onReady={onReady}
                 onStateChange={onStateChange}
-                onEnd={() => currentSong && onSongEnded(currentSong.id)}
+                onEnd={handleVideoEnd}
                 onError={onError}
                 className="w-full h-full"
             />
         </div>
-        <div className={`absolute inset-0 bg-cover bg-center transition-opacity duration-500 ${isVideoExpanded ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} style={{ backgroundImage: `url(${activeSong.song.albumArtUrl || '/placeholder.png'})` }}>
+        
+        {/* Cover Image Overlay - Always visible on top of iframe to hide native controls */}
+        <div 
+            className="absolute inset-0 bg-cover bg-center transition-opacity duration-500 pointer-events-none z-10 opacity-100"
+            style={{ backgroundImage: `url(${activeSong.song.albumArtUrl || '/placeholder.png'})` }}
+        >
             <div className="absolute inset-0 bg-black/40 backdrop-blur-md" />
         </div>
+        
+        {/* Error / Loading Overlay */}
         {(error || isTransitioning) && (
-            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm text-white">
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm text-white p-4 text-center">
                 {error ? (
                     <>
-                        <AlertCircle className="w-8 h-8 mb-2 text-red-500" />
-                        <p className="text-sm font-medium">{error}</p>
+                        <AlertCircle className="w-10 h-10 mb-2 text-orange-500" />
+                        <p className="text-sm font-medium mb-4">{error}</p>
+                        <div className="flex gap-4">
+                            <button 
+                                onClick={handleManualRetry}
+                                className="px-6 py-3 bg-white text-black font-bold rounded-full hover:scale-105 transition flex items-center gap-2 shadow-lg"
+                            >
+                                <Play className="w-5 h-5 fill-current" /> Tap to Play
+                            </button>
+                            <button 
+                                onClick={handleSkip}
+                                className="px-4 py-3 bg-white/10 text-white font-medium rounded-full hover:bg-white/20 transition"
+                            >
+                                Skip
+                            </button>
+                        </div>
                     </>
                 ) : (
                     <>
@@ -315,6 +406,7 @@ function InternalPlayer({
                 )}
             </div>
         )}
+        
         {isVideoVisible && (
             <button onClick={() => setIsVideoExpanded(!isVideoExpanded)} className="absolute top-4 right-4 z-30 p-2 bg-black/50 hover:bg-black/70 text-white rounded-full backdrop-blur-md transition-all opacity-0 group-hover:opacity-100 focus:opacity-100">
                 {isVideoExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
