@@ -113,7 +113,3 @@ SongVote uses Capacitor to wrap the Next.js app in a native Android shell.
 2.  Copy your User ID from the database (or check the `/api/auth/me` endpoint).
 3.  Add `SUPER_ADMIN_ID="your_id"` to your `.env` file.
 4.  Navigate to `/admin` to view platform analytics.
-
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
