@@ -37,7 +37,7 @@ SongVote is a real-time, collaborative playlist platform. A host creates a room,
 
 1.  **Clone the repository**
     ```bash
-    git clone https://github.com/yourusername/songvote.git
+    git clone https://github.com/Imjack1-cyber/songvote.git
     cd songvote
     ```
 
